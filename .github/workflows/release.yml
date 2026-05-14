@@ -1,0 +1,23 @@
+name: Release
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    permissions:
+      contents: write
+    uses: unpins/action-build/.github/workflows/release.yml@v1
+    with:
+      package_name: 'gvim'
+      package_data: true
+      # Empty native list: gvim has no native build today.
+      # action-build auto-appends the windows-x86_64 entry.
+      platforms: |
+        []
+    secrets:
+      CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
