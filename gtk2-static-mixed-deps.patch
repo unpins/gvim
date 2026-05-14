@@ -1,0 +1,21 @@
+Skip _gtk_module_has_mixed_deps() when running as a static binary.
+
+g_module_open(NULL) returns NULL on musl-static (no dynamic linker, so
+introspecting the running process's symbol table is impossible). The
+mixed-deps check is meant to detect accidental gtk2+gtk3 coexistence in
+the same process — irrelevant for a self-contained static binary —
+and the NULL-pointer it returns triggers two GModule-CRITICAL warnings
+through g_module_symbol/g_module_close on every gtk_init().
+
+--- a/gtk/gtkmain.c
++++ b/gtk/gtkmain.c
+@@ -643,6 +643,9 @@
+     module = g_module_open (NULL, 0);
+   else
+     module = module_to_check;
++  /* Static build: g_module_open(NULL) returns NULL (no dynamic linker
++   * to introspect). A static binary cannot have loaded a second GTK. */
++  if (!module) return FALSE;
+ 
+   if (g_module_symbol (module, "gtk_widget_device_is_shadowed", &func))
+     result = TRUE;

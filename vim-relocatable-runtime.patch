@@ -1,0 +1,188 @@
+Make $VIMRUNTIME resolve via argv[0] on Unix, with a stderr warning when the
+resolved path is missing.
+
+Upstream Linux/BSD vim never walks argv[0] to find $VIM/$VIMRUNTIME — it
+relies entirely on the compile-time pathdef (set by --prefix) or the
+'helpfile' option (which, in nixpkgs and other prefix-based builds, gets
+pre-expanded to a `/nix/store/...` path that doesn't exist on the user's
+machine). The exe-name code paths in misc1.c are dead code on Unix because:
+
+  - feature.h gates USE_EXE_NAME to MSWIN/MACOS_X/VMS, so the macro isn't
+    defined on plain Unix.
+  - Even with USE_EXE_NAME, there's no Unix-side mch_get_exe_name() (only
+    Windows has one), so the exe_name global stays NULL.
+  - Even with exe_name populated, the helpfile branch is tried first, and
+    when its walk lands on a non-existent path it falls through to the
+    pathdef default instead of trying exe_name.
+  - vim_version_dir only probes <vimdir>/<ver> and <vimdir>/runtime, never
+    the FHS layout <vimdir>/../share/vim/<ver> that unpins ships.
+
+This patch makes the relocatable layout work end-to-end:
+
+1. feature.h: define USE_EXE_NAME on Unix.
+2. os_unix.c: implement mch_get_exe_name() via readlink("/proc/self/exe").
+3. proto/os_unix.pro: declare the new function so misc1.c can call it.
+4. misc1.c::vim_getenv: call mch_get_exe_name() lazily on first invocation
+   so exe_name is populated before any code path consumes it.
+5. misc1.c::vim_getenv: after the helpfile-driven walk fails (VIM_CLEAR
+   fires because the baked path doesn't exist on this machine), retry the
+   walk with exe_name.
+6. misc1.c::vim_version_dir: also probe <vimdir>/../share/vim/<ver>, so
+   exe at <root>/bin/<exe> can find runtime at <root>/share/vim/<ver>/.
+7. misc1.c::vim_getenv: emit a one-shot stderr warning if the resolved
+   $VIMRUNTIME doesn't pass mch_isdir — turns a silent
+   "menus/syntax/help missing" deploy bug into an actionable message.
+
+--- a/src/feature.h
++++ b/src/feature.h
+@@ -765,6 +765,16 @@
+ #endif
+ 
+ /*
++ * USE_EXE_NAME: derive $VIM/$VIMRUNTIME from argv[0] when env unset. Already
++ * defined for MSWIN/MACOS_X/VMS in their os_*.h. Enable on Unix too (this
++ * activates the existing argv[0]-walk logic + matching mch_get_exe_name in
++ * os_unix.c) so unpins' relocatable layout works without baked paths.
++ */
++#if !defined(MSWIN) && !defined(MACOS_X) && !defined(VMS) && !defined(USE_EXE_NAME)
++# define USE_EXE_NAME
++#endif
++
++/*
+  * RUNTIME_GLOBAL	Comma-separated list of directory names for global Vim
+  *			runtime directories.
+  *			Don't define this if the preprocessor can't handle
+--- a/src/misc1.c
++++ b/src/misc1.c
+@@ -1785,6 +1785,14 @@
+ 	}
+     }
+     vim_free(p.string);
++    // unpins relocatable FHS layout: <vimdir>/../share/vim/<ver>. Covers
++    // exe at <root>/bin/<name> with runtime at <root>/share/vim/<ver>/.
++    concat_fnames(vimdir, vimdir_len,
++	(char_u *)"../share/vim/" VIM_VERSION_NODOT,
++	STRLEN_LITERAL("../share/vim/" VIM_VERSION_NODOT), TRUE, &p);
++    if (p.string != NULL && mch_isdir(p.string))
++	return p.string;
++    vim_free(p.string);
+     return NULL;
+ }
+ 
+@@ -1801,6 +1809,17 @@
+     char_u	*p = NULL;
+     char_u	*pend;
+     int		vimruntime;
++
++#if defined(USE_EXE_NAME) && !defined(MSWIN) && !defined(MACOS_X)
++    // unpins: ensure exe_name is populated before we may need it. Unlike
++    // MSWIN (which has mch_get_exe_name via os_win32.c) and MACOS_X (with
++    // its bundle-based resolution), generic Unix has no upstream callsite,
++    // so the global stays NULL and all USE_EXE_NAME paths are dead. Calling
++    // it here populates exe_name from /proc/self/exe on the first vim_getenv
++    // (which always precedes any code path that consumes exe_name).
++    if (exe_name == NULL)
++	mch_get_exe_name();
++#endif
+ #ifdef MSWIN
+     WCHAR	*wn, *wp;
+ 
+@@ -1981,6 +2000,38 @@
+ 		*mustfree = TRUE;
+ 	    }
+ 	}
++#ifdef USE_EXE_NAME
++	// unpins: if p_hf walk yielded nothing useful (VIM_CLEAR fired
++	// because the dir doesn't exist on this machine), retry with
++	// exe_name. p_hf is often pre-expanded to a baked compile-time
++	// path (e.g. /nix/store/.../share/vim/doc/help.txt on nixpkgs);
++	// exe_name walks relative to the actual running binary.
++	if (p == NULL && exe_name != NULL && *exe_name != NUL)
++	{
++	    p = exe_name;
++	    pend = gettail(p);
++	    pend = remove_tail(p, pend, (char_u *)"src");
++	    if (!vimruntime)
++	    {
++		pend = remove_tail(p, pend, (char_u *)RUNTIME_DIRNAME);
++		pend = remove_tail(p, pend, (char_u *)VIM_VERSION_NODOT);
++	    }
++	    if (pend > p && after_pathsep(p, pend))
++		--pend;
++	    p = vim_strnsave(p, pend - p);
++	    if (p != NULL && !mch_isdir(p))
++		VIM_CLEAR(p);
++	    else if (p != NULL)
++	    {
++		if (vimruntime && (pend = vim_version_dir(p)) != NULL)
++		{
++		    vim_free(p);
++		    p = pend;
++		}
++		*mustfree = TRUE;
++	    }
++	}
++#endif
+     }
+ 
+ #ifdef HAVE_PATHDEF
+@@ -2017,6 +2068,13 @@
+ 	{
+ 	    vim_setenv((char_u *)"VIMRUNTIME", p);
+ 	    didset_vimruntime = TRUE;
++	    // unpins: warn once if the resolved runtime path is missing —
++	    // typically a relocatable deploy without the data tarball.
++	    if (!mch_isdir(p))
++		fprintf(stderr,
++		    "vim: warning: $VIMRUNTIME resolves to '%s' which does "
++		    "not exist; menus, syntax, and help will be unavailable\n",
++		    (char *)p);
+ 	}
+ 	else
+ 	{
+--- a/src/os_unix.c
++++ b/src/os_unix.c
+@@ -1545,6 +1545,33 @@
+ #endif
+ }
+ 
++#if defined(USE_EXE_NAME) && !defined(MACOS_X)
++/*
++ * unpins: populate the global `exe_name` from /proc/self/exe (Linux). This is
++ * the Unix counterpart of os_win32.c's mch_get_exe_name(); upstream vim only
++ * implements it on Windows, so the USE_EXE_NAME code paths in misc1.c are
++ * dead on plain Unix. Called lazily from vim_getenv() on first use.
++ *
++ * On platforms without /proc (BSDs without procfs), readlink fails and
++ * exe_name stays NULL; fallbacks (helpfile, pathdef) take over.
++ */
++    void
++mch_get_exe_name(void)
++{
++    char_u  buf[MAXPATHL + 1];
++    ssize_t len;
++
++    if (exe_name != NULL)
++	return;
++    len = readlink("/proc/self/exe", (char *)buf, MAXPATHL);
++    if (len > 0 && len <= MAXPATHL)
++    {
++	buf[len] = NUL;
++	exe_name = vim_strsave(buf);
++    }
++}
++#endif
++
+     void
+ mch_init(void)
+ {
+--- a/src/proto/os_unix.pro
++++ b/src/proto/os_unix.pro
+@@ -1,4 +1,7 @@
+ /* os_unix.c */
++#if defined(USE_EXE_NAME) && !defined(MACOS_X)
++void mch_get_exe_name(void);
++#endif
+ sighandler_T mch_signal(int sig, sighandler_T func);
+ int mch_chdir(char *path);
+ void mch_write(char_u *s, int len);

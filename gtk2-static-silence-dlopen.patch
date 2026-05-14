@@ -1,0 +1,49 @@
+Demote dlopen-failure noise for static GTK2 builds.
+
+A statically-linked binary can never load a .so via g_module_open(), so
+every GTK_MODULES entry, theme engine, and atk-bridge that the host
+desktop's gtkrc requests will fail. Demote these failures to g_debug so
+they don't spam stderr on every gtk_init().
+
+--- a/gtk/gtkmodules.c
++++ b/gtk/gtkmodules.c
+@@ -370,7 +370,8 @@
+    {
+       const gchar *error = g_module_error ();
+ 
+-      g_message ("Failed to load module \"%s\"%s%s",
++      /* Static build: dlopen always fails — keep this off the default log stream. */
++      g_debug ("Failed to load module \"%s\"%s%s",
+                  name, error ? ": " : "", error ? error : "");
+     }
+ 
+--- a/gtk/gtkthemes.c
++++ b/gtk/gtkthemes.c
+@@ -68,7 +68,8 @@
+   
+   if (!engine_path)
+     {
+-      g_warning (_("Unable to locate theme engine in module_path: \"%s\","),
++      /* Static build: theme engines can't be dlopen'd — quiet down. */
++      g_debug (_("Unable to locate theme engine in module_path: \"%s\","),
+ 		 engine->name);
+       return FALSE;
+     }
+@@ -81,7 +82,7 @@
+   g_free(engine_path);
+   if (!engine->library)
+     {
+-      g_warning ("%s", g_module_error());
++      g_debug ("%s", g_module_error());
+       return FALSE;
+     }
+   
+@@ -93,7 +94,7 @@
+       !g_module_symbol (engine->library, "theme_create_rc_style", 
+ 			(gpointer *)&engine->create_rc_style))
+     {
+-      g_warning ("%s", g_module_error());
++      g_debug ("%s", g_module_error());
+       g_module_close (engine->library);
+       
+       return FALSE;
