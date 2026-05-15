@@ -14,12 +14,4 @@ jobs:
     permissions:
       contents: write
     uses: unpins/action-build/.github/workflows/build.yml@main
-    with:
-      # Linux x86_64 native (static GTK2 build); darwin omitted because GUI
-      # Vim on macOS is MacVim.app, not a CLI binary.
-      # action-build auto-appends the windows-x86_64 entry.
-      platforms: |
-        [
-          {"runner":"ubuntu-latest", "os":"linux", "arch":"x86_64"}
-        ]
     secrets: inherit
