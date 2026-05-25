@@ -96,7 +96,7 @@
           # AC_PATH_X heuristics (xmkmf + /usr/X11R6) miss nix-store-resident X
           # libs and set no_x=yes; preset the autoconf cache so vim's configure
           # proceeds past the X gate. -I/-L paths come from stdenv via buildInputs.
-          vim = (static.vim-full.override {
+          vimBase = (static.vim-full.override {
             features = "normal";
             guiSupport = "gtk2";
             gtk2-x11 = gtk2static;
@@ -119,28 +119,62 @@
             ) old.configureFlags ++ [
               "ac_cv_have_x=have_x=yes ac_x_includes= ac_x_libraries="
             ];
-            # Linux vim hardcodes the compile-time pathdef ($VIMRUNTIME =
-            # /nix/store/.../share/vim/<ver>) and never walks argv[0] for it
-            # (USE_EXE_NAME is Mac/Win/VMS-only upstream). Without this patch
-            # the deployed binary can't find its own runtime → :menu empty,
-            # no syntax. Patch enables USE_EXE_NAME on Unix + teaches
-            # vim_version_dir the FHS <root>/bin + <root>/share/vim/<ver>
-            # layout, and warns to stderr if the resolved path is missing.
-            patches = (old.patches or [ ]) ++ [
-              ./vim-relocatable-runtime.patch
-            ];
+          });
+
+          # Pack the upstream runtime tree (share/vim/vim92) into a deflate
+          # ZIP. Linked into the binary as a section via `ld -r -b binary`
+          # and served from memory by the VFS layer. Drops the on-disk
+          # share/vim/vim92/ from the install.
+          runtimeZip = pkgs.runCommand "vim-runtime.zip" {
+            nativeBuildInputs = [ pkgs.buildPackages.zip ];
+          } ''
+            cd ${vimBase}/share/vim
+            rt=$(ls -d vim* | head -1)
+            zip -9 -r -q $out "$rt"
+            if [ ! -f $out ] && [ -f $out.zip ]; then mv $out.zip $out; fi
+          '';
+
+          vim = vimBase.overrideAttrs (old: {
+            postPatch = (old.postPatch or "") + ''
+              echo "==> inject unpins VFS sources"
+              cp ${./unpins_vfs.h}            src/unpins_vfs.h
+              cp ${./unpins_vfs_hooks.h}      src/unpins_vfs_hooks.h
+              cp ${./unpins_vfs.c}            src/unpins_vfs.c
+              cp ${./unpins_init.c}           src/unpins_init.c
+              cp ${./unpins_runtime_data.S}   src/unpins_runtime_data.S
+              cp ${./miniz.h}                 src/miniz.h
+              cp ${./miniz.c}                 src/miniz.c
+
+              echo "==> stage runtime ZIP at src/unpins_runtime.zip for .incbin"
+              cp ${runtimeZip} src/unpins_runtime.zip
+              chmod 0644 src/unpins_runtime.zip
+
+              echo "==> insert hooks include INSIDE vim.h's VIM__H guard"
+              sed -i 's|^#endif // VIM__H|#include "unpins_vfs_hooks.h"\n#endif // VIM__H|' src/vim.h
+
+              echo "==> inject unpins_init() right after mch_early_init() in main.c"
+              sed -i '0,/mch_early_init();/{s|mch_early_init();|mch_early_init();\n    unpins_init();|}' src/main.c
+
+              echo "==> add OBJ entries + compile rules to autotools Makefile"
+              sed -i 's|$(XDIFF_OBJS_USED)|$(XDIFF_OBJS_USED) \\\n\tobjects/unpins_vfs.o \\\n\tobjects/unpins_init.o \\\n\tobjects/unpins_runtime_data.o \\\n\tobjects/miniz.o|' src/Makefile
+              cat ${./patches/Makefile_append} >> src/Makefile
+            '';
           });
         in
         # vim-full installs `vim` (real binary, GUI-capable when configured)
         # plus symlinks: gvim, evim, view, vi, ex, rview, rvim, vimdiff. Vim's
         # mode is chosen by argv[0]. We ship just `gvim` → make it the real
-        # file. Drop the desktop/icon files; unpins is CLI-only.
+        # file. Drop the desktop/icon files; unpins is CLI-only. Runtime
+        # tree is embedded in the binary, so wipe share/vim/vim* too.
         vim.overrideAttrs (old: {
           pname = "gvim";
           postInstall = (old.postInstall or "") + ''
             find "$out/bin" -mindepth 1 -not -name vim -delete
             mv "$out/bin/vim" "$out/bin/gvim"
             rm -rf "$out/share/applications" "$out/share/icons"
+            rm -rf "$out"/share/vim/vim*
+            rm -f  "$out/share/vim/vimrc"
+            rmdir  "$out/share/vim" 2>/dev/null || true
           '';
         });
 
@@ -157,6 +191,15 @@
           let
             cross = pkgs.pkgsCross.mingwW64;
             prefix = cross.stdenv.hostPlatform.config;
+
+            runtimeZip = pkgs.runCommand "vim-runtime.zip" {
+              nativeBuildInputs = [ pkgs.buildPackages.zip ];
+            } ''
+              cd ${pkgs.vim}/share/vim
+              rt=$(ls -d vim* | head -1)
+              zip -9 -r -q $out "$rt"
+              if [ ! -f $out ] && [ -f $out.zip ]; then mv $out.zip $out; fi
+            '';
           in
           cross.stdenv.mkDerivation {
             pname = "gvim";
@@ -168,6 +211,47 @@
             strictDeps = true;
             enableParallelBuilding = true;
 
+            postPatch = ''
+              echo "==> inject unpins VFS sources"
+              cp ${./unpins_vfs.h}            src/unpins_vfs.h
+              cp ${./unpins_vfs_hooks.h}      src/unpins_vfs_hooks.h
+              cp ${./unpins_vfs.c}            src/unpins_vfs.c
+              cp ${./unpins_init.c}           src/unpins_init.c
+              cp ${./unpins_runtime_data.S}   src/unpins_runtime_data.S
+              cp ${./miniz.h}                 src/miniz.h
+              cp ${./miniz.c}                 src/miniz.c
+
+              echo "==> stage runtime ZIP at src/unpins_runtime.zip for .incbin"
+              cp ${runtimeZip} src/unpins_runtime.zip
+              chmod 0644 src/unpins_runtime.zip
+
+              echo "==> insert hooks include inside VIM__H guard"
+              sed -i 's|^#endif // VIM__H|#include "unpins_vfs_hooks.h"\n#endif // VIM__H|' src/vim.h
+
+              echo "==> inject unpins_init() right after mch_early_init() in main.c"
+              sed -i '0,/mch_early_init();/{s|mch_early_init();|mch_early_init();\n    unpins_init();|}' src/main.c
+
+              echo "==> patch os_win32.c mch_open/mch_fopen to dispatch virtual paths"
+              awk '
+              /^mch_open\(const char \*name, int flags, int mode\)$/ {
+                  print; getline; print;
+                  print "    if (unpins_vfs_is_virtual(name))";
+                  print "\treturn unpins_vfs_open(name, flags, mode);";
+                  next;
+              }
+              /^mch_fopen\(const char \*name, const char \*mode\)$/ {
+                  print; getline; print;
+                  print "    if (unpins_vfs_is_virtual(name))";
+                  print "\treturn unpins_vfs_fopen(name, mode);";
+                  next;
+              }
+              { print }' src/os_win32.c > src/os_win32.c.new
+              mv src/os_win32.c.new src/os_win32.c
+
+              echo "==> add OBJ entries to Make_cyg_ming.mak"
+              cat ${./patches/Make_cyg_ming_append} >> src/Make_cyg_ming.mak
+            '';
+
             # Knobs (delta vs unpins/vim is GUI=yes + target):
             #   GUI=yes      — Win32 GUI build → gvim.exe (-mwindows subsystem).
             #   OLE=no       — skip Windows shell extension (gvimext.dll).
@@ -176,6 +260,17 @@
             #   STATIC_*=yes — embed gcc/winpthread runtime; no DLL companions.
             buildPhase = ''
               runHook preBuild
+
+              # Pre-build our objects into OUTDIR (gobjx86-64 for ARCH=x86-64).
+              mkdir -p src/gobjx86-64
+              MINIZ_DEFS='-DMINIZ_NO_TIME -DMINIZ_NO_ARCHIVE_WRITING_APIS -DMINIZ_NO_ZLIB_APIS -DMINIZ_NO_ZLIB_COMPATIBLE_NAMES'
+              CFLAGS_BASE='-I. -O2 -march=x86-64 -DWIN32 -DWINVER=0x0601 -D_WIN32_WINNT=0x0601'
+              ( cd src && \
+                ${prefix}-gcc -c $CFLAGS_BASE $MINIZ_DEFS -o gobjx86-64/unpins_vfs.o            unpins_vfs.c          && \
+                ${prefix}-gcc -c $CFLAGS_BASE             -o gobjx86-64/unpins_init.o           unpins_init.c         && \
+                ${prefix}-gcc -c $CFLAGS_BASE $MINIZ_DEFS -w -o gobjx86-64/miniz.o              miniz.c               && \
+                ${prefix}-gcc -c $CFLAGS_BASE             -o gobjx86-64/unpins_runtime_data.o   unpins_runtime_data.S )
+
               make -C src -f Make_ming.mak \
                 FEATURES=NORMAL \
                 GUI=yes \
@@ -194,9 +289,9 @@
 
             installPhase = ''
               runHook preInstall
-              mkdir -p $out/bin $out/share
+              mkdir -p $out/bin
               cp src/gvim.exe $out/bin/gvim.exe
-              cp -r ${pkgs.vim}/share/vim $out/share/vim
+              # Runtime tree is embedded — no companion share/vim to ship.
               runHook postInstall
             '';
 
