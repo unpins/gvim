@@ -19,6 +19,20 @@
   #     CLI binary.
   outputs = { self, unpins-lib, nixpkgs }:
     let
+      # Man tree embedded into both the native gvim and gvim.exe via withMan.
+      # vim-full's installed man (vim/vimdiff/evim/vimtutor.1) is the same set
+      # the gvim build produces and is version-locked to this flake's nixpkgs.
+      # Upstream installs NO gvim.1 (nixpkgs skips vim's GUI man-link step; gvim
+      # is documented inside vim.1), so synthesize a `.so man1/vim.1` redirect —
+      # `unpin man gvim` then resolves to vim.1 through the .unpin_man kind-0
+      # mechanism, no renderer special-case. Also gives gvim.exe man (the mingw
+      # cross build ships none, and nixpkgs has no `gvim` attr to source from).
+      gvimMan = pkgs: pkgs.runCommand "gvim-man" { } ''
+        mkdir -p $out/share/man/man1
+        cp ${pkgs.vim-full}/share/man/man1/*.1.gz $out/share/man/man1/
+        printf '.so man1/vim.1\n' > $out/share/man/man1/gvim.1
+      '';
+
       linuxGvim = system:
         let
           pkgs = import nixpkgs { inherit system; };
@@ -166,7 +180,12 @@
         # mode is chosen by argv[0]. We ship just `gvim` → make it the real
         # file. Drop the desktop/icon files; unpins is CLI-only. Runtime
         # tree is embedded in the binary, so wipe share/vim/vim* too.
-        vim.overrideAttrs (old: {
+        #
+        # withMan: gvim's native path is wired manually (nativeBuild = false),
+        # so it bypasses mkStandaloneFlake's automatic embedMan step. Apply
+        # withMan here (with the shared gvimMan tree, incl. the gvim→vim .so) so
+        # `gvim` carries man pages like unpins/vim does.
+        unpins-lib.lib.withMan pkgs { primary = "gvim"; manRoot = "${gvimMan pkgs}"; } (vim.overrideAttrs (old: {
           pname = "gvim";
           postInstall = (old.postInstall or "") + ''
             find "$out/bin" -mindepth 1 -not -name vim -delete
@@ -176,7 +195,7 @@
             rm -f  "$out/share/vim/vimrc"
             rmdir  "$out/share/vim" 2>/dev/null || true
           '';
-        });
+        }));
 
       base = unpins-lib.lib.mkStandaloneFlake {
         inherit self;
@@ -201,6 +220,10 @@
               if [ ! -f $out ] && [ -f $out.zip ]; then mv $out.zip $out; fi
             '';
           in
+          # gvim.exe gets no man from mkStandaloneFlake's windows path
+          # (it sources from x86_64-linux.gvim, which nixpkgs lacks → null),
+          # so embed it here from the shared gvimMan tree.
+          unpins-lib.lib.withMan pkgs { primary = "gvim"; manRoot = "${gvimMan pkgs}"; } (
           cross.stdenv.mkDerivation {
             pname = "gvim";
             inherit (pkgs.vim) version src;
@@ -296,7 +319,7 @@
             '';
 
             passthru = { pname = "gvim"; inherit (pkgs.vim) version; };
-          };
+          });
       };
 
       linuxNative = linuxGvim "x86_64-linux";
