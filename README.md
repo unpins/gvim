@@ -12,12 +12,18 @@ The Linux build is statically linked against GTK2 + X11 (~22 MB, no shared libra
 
 Built with Vim's `normal` feature set. The scripting interpreters (Lua, Python, Ruby, Perl, Tcl) and Wayland/XIM input are not compiled in, so the binary stays self-contained. The Vim runtime tree (syntax, indent, spell, help) is embedded inside the executable and served from memory — there is no companion `share/vim` directory.
 
-## Installation
+## Usage
 
-Install with [unpin](https://github.com/unpins/unpin):
+Run the `gvim` program with [unpin](https://github.com/unpins/unpin):
 
 ```bash
-unpin gvim
+unpin gvim file.txt
+```
+
+To install it onto your PATH:
+
+```bash
+unpin install gvim
 ```
 
 ## Build locally
