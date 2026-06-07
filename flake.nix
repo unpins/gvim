@@ -19,6 +19,8 @@
   #     CLI binary.
   outputs = { self, unpins-lib, nixpkgs }:
     let
+      ulib = unpins-lib.lib;
+
       # Man tree embedded into both the native gvim and gvim.exe via withMan.
       # vim-full's installed man (vim/vimdiff/evim/vimtutor.1) is the same set
       # the gvim build produces and is version-locked to this flake's nixpkgs.
@@ -27,16 +29,19 @@
       # `unpin man gvim` then resolves to vim.1 through the .unpin_man kind-0
       # mechanism, no renderer special-case. Also gives gvim.exe man (the mingw
       # cross build ships none, and nixpkgs has no `gvim` attr to source from).
-      gvimMan = pkgs: pkgs.runCommand "gvim-man" { } ''
+      # Sourced from the BUILD platform (buildPackages) so cross targets don't
+      # cross-build vim-full just to harvest its (arch-independent) man pages.
+      gvimMan = pkgs: pkgs.buildPackages.runCommand "gvim-man" { } ''
         mkdir -p $out/share/man/man1
-        cp ${pkgs.vim-full}/share/man/man1/*.1.gz $out/share/man/man1/
+        cp ${pkgs.buildPackages.vim-full}/share/man/man1/*.1.gz $out/share/man/man1/
         printf '.so man1/vim.1\n' > $out/share/man/man1/gvim.1
       '';
 
-      linuxGvim = system:
+      # Takes the per-target `pkgs` mkStandaloneFlake hands the `build` closure
+      # (native scope, or a pkgsCross.<arch> scope for the Linux crosses), so a
+      # single definition covers every Linux arch.
+      linuxGvim = pkgs:
         let
-          pkgs = import nixpkgs { inherit system; };
-
           # graphite2's pkgsStatic .la still claims library_names=libgraphite2.so
           # (which isn't installed). libtool obeys the .la over the .a → link
           # fails. Strip the .la files.
@@ -46,6 +51,15 @@
                 find $out -name '*.la' -delete
               '';
             });
+          } // superP.lib.optionalAttrs superP.stdenv.hostPlatform.isRiscV {
+            # riscv64: libjpeg-turbo's RVV SIMD coverage helper (simdcoverage.c)
+            # fails to compile under gcc-15 — the new RVV jsimd port doesn't
+            # declare every jsimd_can_* the helper references
+            # (jsimd_can_encode_mcu_AC_refine_prepare). Pulled in transitively
+            # via gtk2 -> gdk-pixbuf's JPEG/TIFF image loaders. Reuse nix-lib's
+            # shared fix (drops the unused helper; the RVV lib code is untouched)
+            # — gate to riscv so the other arches keep the cache-hit libjpeg.
+            libjpeg = ulib.nativeFixes."libjpeg-turbo" superP;
           });
 
           # at-spi2-core in atk_only mode: builds just the libatk stub without
@@ -95,12 +109,23 @@
               "--with-included-loaders=yes"
               "--with-included-immodules=yes"
             ];
-            # perf/testperf generates a duplicate marshalers.c whose symbols
-            # collide with gtk/gtkmarshalers.o under static link. We don't need
-            # the benchmark — replace its Makefile with a no-op.
+            # Replace the Makefiles of every non-installed subdir with a no-op.
+            #   perf/  — testperf generates a duplicate marshalers.c whose
+            #            symbols collide with gtk/gtkmarshalers.o under static
+            #            link (original reason).
+            #   tests/ demos/ examples/ — each builds dozens of throwaway
+            #            programs that statically link the FULL GTK2 + X11 +
+            #            codec closure (~20 MB apiece). They are never installed,
+            #            but `make all` links them all, which blows the build
+            #            tmpdir on disk-constrained runners ("No space left on
+            #            device"). Skipping them leaves the installed lib
+            #            byte-identical and keeps the cross builds CI-disk-safe.
             postConfigure = (old.postConfigure or "") + ''
-              printf 'all install clean check distclean install-strip:\n\t@true\n' \
-                > perf/Makefile
+              for d in perf tests demos examples; do
+                [ -f "$d/Makefile" ] && \
+                  printf 'all install clean check distclean install-strip:\n\t@true\n' \
+                    > "$d/Makefile"
+              done
             '';
           });
 
@@ -200,7 +225,23 @@
       base = unpins-lib.lib.mkStandaloneFlake {
         inherit self;
         name = "gvim";
-        nativeBuild = false; # native (Linux) is wired up manually below
+
+        # gvim has no macOS build (on macOS, gvim ships as MacVim.app), so drop
+        # every darwin attr from the auto-discovered matrix. All Linux archs +
+        # Windows remain.
+        linuxOnly = true;
+
+        # `build` (native + every Linux cross) and `windowsBuild` each apply
+        # withMan with the custom gvimMan tree themselves (nixpkgs has no `gvim`
+        # attr to graft from), so opt out of mkStandaloneFlake's automatic
+        # embedMan to avoid a redundant second pass.
+        embedMan = false;
+
+        # Linux native + cross (i686/ppc64le/riscv64/aarch64/armv7l): the static
+        # GTK2 gvim is built from the per-target `pkgs` mkStandaloneFlake hands
+        # us, so the whole matrix fans out automatically (same shape as
+        # unpins/vim — no manual per-arch wiring below anymore).
+        build = pkgs: linuxGvim pkgs;
 
         # Same Make_ming.mak path as unpins/vim, but GUI=yes so the build
         # links against Win32 GUI (USER32/GDI32/comdlg32/COMCTL32) and the
@@ -322,21 +363,6 @@
           });
       };
 
-      linuxNative = linuxGvim "x86_64-linux";
     in
-    base // {
-      packages = base.packages // {
-        x86_64-linux = (base.packages.x86_64-linux or { }) // {
-          default = linuxNative;
-        };
-      };
-      apps = base.apps // {
-        x86_64-linux = {
-          default = {
-            type = "app";
-            program = "${linuxNative}/bin/gvim";
-          };
-        };
-      };
-    };
+    base;
 }
