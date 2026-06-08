@@ -1,12 +1,12 @@
 # gvim
 
-Standalone build of [gvim](https://www.vim.org/) — the GUI variant of Vim.
+[gvim](https://www.vim.org/) — the GUI variant of Vim. A single self-contained binary, built natively for Linux and Windows.
 
 [![CI](https://github.com/unpins/gvim/actions/workflows/gvim.yml/badge.svg)](https://github.com/unpins/gvim/actions)
 ![Linux](https://img.shields.io/badge/Linux-✓-success?logo=linux&logoColor=white)
 ![Windows](https://img.shields.io/badge/Windows-✓-success?logo=windows&logoColor=white)
 
-Part of the [unpins](https://unpins.org) project — native single-binary builds with no third-party runtime dependencies.
+Part of the [unpins](https://unpins.org) catalog; install it with [`unpin`](https://github.com/unpins/unpin): `unpin install gvim`.
 
 The Linux build is statically linked against GTK2 + X11 (~22 MB, no shared library dependencies). On Windows the Win32 GUI is used directly. macOS is not supported — on macOS, gvim is shipped as MacVim.app, not a CLI binary.
 
@@ -26,6 +26,10 @@ To install it onto your PATH:
 unpin install gvim
 ```
 
+## Man pages
+
+The Vim man pages (`vim`, `vimdiff`, `evim`, `vimtutor`) are embedded in the binary; `gvim` is documented inside `vim.1`, so `unpin man gvim` resolves there.
+
 ## Build locally
 
 ```bash
@@ -41,10 +45,6 @@ nix build github:unpins/gvim#"windows-x86_64"
 ```
 
 The first invocation will offer to add the [unpins.cachix.org](https://unpins.cachix.org) substituter so most pulls come pre-built.
-
-## Man pages
-
-The Vim man pages (`vim`, `vimdiff`, `evim`, `vimtutor`) are embedded in the binary; `gvim` is documented inside `vim.1`, so `unpin man gvim` resolves there.
 
 ## Manual download
 
