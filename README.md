@@ -1,16 +1,12 @@
 # gvim
 
-[gvim](https://www.vim.org/) — the GUI variant of Vim. A single self-contained binary, built natively for Linux and Windows.
+[gvim](https://www.vim.org/) — the graphical version of the Vim text editor. A single self-contained binary, built natively for Linux and Windows.
 
 [![CI](https://github.com/unpins/gvim/actions/workflows/gvim.yml/badge.svg)](https://github.com/unpins/gvim/actions)
 ![Linux](https://img.shields.io/badge/Linux-✓-success?logo=linux&logoColor=white)
 ![Windows](https://img.shields.io/badge/Windows-✓-success?logo=windows&logoColor=white)
 
 Part of the [unpins](https://unpins.org) catalog; install it with [`unpin`](https://github.com/unpins/unpin): `unpin install gvim`.
-
-The Linux build is statically linked against GTK2 + X11 (~22 MB, no shared library dependencies). On Windows the Win32 GUI is used directly. macOS is not supported — on macOS, gvim is shipped as MacVim.app, not a CLI binary.
-
-Built with Vim's `normal` feature set. The scripting interpreters (Lua, Python, Ruby, Perl, Tcl) and Wayland/XIM input are not compiled in, so the binary stays self-contained. The Vim runtime tree (syntax, indent, spell, help) is embedded inside the executable and served from memory — there is no companion `share/vim` directory.
 
 ## Usage
 
@@ -48,4 +44,11 @@ The first invocation will offer to add the [unpins.cachix.org](https://unpins.ca
 
 ## Manual download
 
-The [Releases](https://github.com/unpins/gvim/releases) page has standalone binaries for manual download. The Vim runtime is embedded in each binary, so no separate data archive is needed.
+The [Releases](https://github.com/unpins/gvim/releases) page has standalone binaries for manual download.
+
+## Build notes
+
+- **Runtime tree embedded.** Vim's runtime files (syntax, indent, spell, help, menus) are packed into a ZIP and served from memory inside the binary by the shared [unpin-vfs](https://github.com/unpins/unpin-vfs) core — no companion `share/vim` directory.
+- **Graphical toolkit.** The Linux build uses GTK2 + X11, linked statically into one binary with no shared-library dependencies (~32 MB). The Windows build uses the native Win32 GUI (cross-built with mingw; no companion DLLs).
+- **Feature set.** Built with Vim's **Normal** feature set. The scripting interpreters (Lua, Python, Ruby, Perl, Tcl) and Wayland/XIM input are not compiled in, which keeps the binary self-contained.
+- **macOS.** The graphical Vim for macOS is [MacVim](https://github.com/macvim-dev/macvim), a separate application, so gvim ships for Linux and Windows.
