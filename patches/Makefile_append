@@ -1,17 +1,32 @@
 
-# === unpins VFS compile rules ===
-objects/unpins_vfs.o: unpins_vfs.c unpins_vfs.h miniz.h
-	$(CCC_NF) $(ALL_CFLAGS) -D_GNU_SOURCE -DMINIZ_NO_TIME -DMINIZ_NO_ARCHIVE_WRITING_APIS -DMINIZ_NO_ZLIB_APIS -DMINIZ_NO_ZLIB_COMPATIBLE_NAMES -o $@ unpins_vfs.c
+# === unpin-vfs compile rules (consolidated core; see github:unpins/unpin-vfs) ===
+# vfs.c + miniz.c replace the old bespoke unpins_vfs.c. Routing is via `ld
+# --wrap` (below) instead of vim.h macro hooks, so no header is injected into
+# vim's TUs. Deflate only (no MINIZ_USE_ZSTD) -> no new runtime dependency.
+# vfs.c #defines _GNU_SOURCE itself, so don't pass -D_GNU_SOURCE here (would
+# warn on redefinition). _GNU_SOURCE IS passed for miniz.o / unpins_init.o.
+# (No xxd applet here -- unlike unpins/vim, gvim ships only the `gvim` binary.)
+UNPIN_VFS_DEFS = -DUNPIN_VFS_DIRS \
+	-DUNPIN_VFS_ROOT='"/__unpins_vimruntime__/"' \
+	-DUNPIN_VFS_BLOB_SYM=unpins_runtime_zip
+MINIZ_DEFS = -DMINIZ_NO_TIME -DMINIZ_NO_ARCHIVE_WRITING_APIS -DMINIZ_NO_ZLIB_APIS -DMINIZ_NO_ZLIB_COMPATIBLE_NAMES
 
-objects/unpins_init.o: unpins_init.c unpins_vfs.h
-	$(CCC_NF) $(ALL_CFLAGS) -D_GNU_SOURCE -o $@ unpins_init.c
+objects/vfs.o: vfs.c vfs.h miniz.h
+	$(CCC_NF) $(ALL_CFLAGS) $(UNPIN_VFS_DEFS) $(MINIZ_DEFS) -o $@ vfs.c
 
 objects/miniz.o: miniz.c miniz.h
-	$(CCC_NF) $(ALL_CFLAGS) -D_GNU_SOURCE -w -DMINIZ_NO_TIME -DMINIZ_NO_ARCHIVE_WRITING_APIS -DMINIZ_NO_ZLIB_APIS -DMINIZ_NO_ZLIB_COMPATIBLE_NAMES -o $@ miniz.c
+	$(CCC_NF) $(ALL_CFLAGS) -D_GNU_SOURCE -w $(MINIZ_DEFS) -o $@ miniz.c
 
-# Embed runtime ZIP via .incbin in a single .S source. Same symbol shape
-# as `ld -r -b binary` would have produced, but the C compiler does the
-# work — sidesteps Apple ld's missing -b binary support on Mach-O and
-# the nixpkgs ld-wrapper's --gc-sections conflict with -r.
+objects/unpins_init.o: unpins_init.c vfs.h
+	$(CCC_NF) $(ALL_CFLAGS) -D_GNU_SOURCE -o $@ unpins_init.c
+
+# Embed runtime ZIP via .incbin in a single .S source (sidesteps Apple ld's
+# missing -b binary on Mach-O and the nixpkgs ld-wrapper's --gc-sections vs -r).
 objects/unpins_runtime_data.o: unpins_runtime_data.S unpins_runtime.zip
 	$(CCC_NF) $(ALL_CFLAGS) -o $@ unpins_runtime_data.S
+
+# Route vim's libc file calls into the VFS at the linker. Appended to ALL_LIBS,
+# which the gvim link uses ($(CClink) ... $(OBJ) $(ALL_LIBS)) but the standalone
+# xxd sub-make does NOT (it inherits only CC/CFLAGS/LDFLAGS) -- so the xxd the
+# autotools build still produces links clean, then gets deleted in postInstall.
+override ALL_LIBS += -Wl,--wrap=open -Wl,--wrap=stat -Wl,--wrap=lstat -Wl,--wrap=access -Wl,--wrap=opendir -Wl,--wrap=readdir -Wl,--wrap=closedir -Wl,--wrap=fopen

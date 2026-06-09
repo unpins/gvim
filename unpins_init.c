@@ -1,46 +1,46 @@
-/* Vim startup glue for the unpins runtime VFS.
+/* gvim startup glue for the unpin-vfs runtime.
  *
- * Called once from main() right after mch_early_init(). The runtime ZIP
- * is embedded into the binary as an ELF section via `ld -r -b binary`
- * applied to unpins_runtime.zip; the linker exports start/end symbols
- * that we treat as a plain byte range.
+ * Called once from main() right after mch_early_init(). The runtime tree is a
+ * ZIP blob embedded as a section (unpins_runtime_data.S); the unpin-vfs core
+ * (vfs.c, linked via `ld --wrap`) serves every libc open/stat/opendir/... whose
+ * path falls under the mount root. All this glue does is pin $VIMRUNTIME/$VIM at
+ * that root so vim's runtime discovery produces paths the wrappers intercept.
  *
- * Idempotent — multiple calls no-op after the first success.
+ * Same model as unpins/vim, minus the xxd multicall: gvim ships only the `gvim`
+ * binary (the GUI build renames vim -> gvim and drops every other applet), so
+ * there is no xxd applet to dispatch here.
+ *
+ * The mount root must match -DUNPIN_VFS_ROOT passed to vfs.c (see flake.nix).
+ * The runtime ZIP holds the vim92/ tree CONTENTS directly (no version prefix),
+ * so $VIMRUNTIME is exactly the marker.
+ *
+ * Idempotent: multiple calls no-op after the first success.
  */
 
-#include "unpins_vfs.h"
+#include "vfs.h"
 
-#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 
-/* Defined by `ld -r -b binary -o … unpins_runtime.zip`. The symbols name
- * the source file with non-alphanum chars folded to underscores. */
-extern const char _binary_unpins_runtime_zip_start[];
-extern const char _binary_unpins_runtime_zip_end[];
-
-static int g_initialized = 0;
+/* Bare mount point (no trailing slash); UNPIN_VFS_ROOT is this + "/". */
+#define VFS_PREFIX "/__unpins_vimruntime__"
 
 void unpins_init(void)
 {
-    if (g_initialized) return;
+    static int done;
+    if (done) return;
 
     const char *dbg = getenv("UNPINS_DEBUG");
     if (dbg) fprintf(stderr, "[unpins] unpins_init called\n");
 
-    size_t size = (size_t)(_binary_unpins_runtime_zip_end
-                           - _binary_unpins_runtime_zip_start);
-    if (dbg) fprintf(stderr, "[unpins] embedded runtime is %zu bytes\n", size);
-
-    if (unpins_vfs_init(_binary_unpins_runtime_zip_start, size) != 0) {
-        if (dbg) fprintf(stderr, "[unpins] unpins_vfs_init failed\n");
+    /* Fail fast (and visibly under UNPINS_DEBUG) if the embedded blob is
+     * unusable; the wrappers would otherwise just lazily ENOENT later. */
+    if (!unpin_vfs_init()) {
+        if (dbg) fprintf(stderr, "[unpins] unpin_vfs_init failed\n");
         return;
     }
-    if (dbg) fprintf(stderr, "[unpins] VFS ready, setting VIMRUNTIME=%s\n", VFS_PREFIX);
+    if (dbg) fprintf(stderr, "[unpins] VFS ready, VIMRUNTIME=%s\n", VFS_PREFIX);
 
-    /* Pin $VIMRUNTIME at the virtual prefix so all of vim's runtime
-     * discovery hits paths under the prefix; the macro redirects route
-     * those reads into the VFS. */
 #ifdef _WIN32
     _putenv("VIMRUNTIME=" VFS_PREFIX);
     _putenv("VIM=" VFS_PREFIX "/..");
@@ -49,5 +49,5 @@ void unpins_init(void)
     setenv("VIM", VFS_PREFIX "/..", 1);
 #endif
 
-    g_initialized = 1;
+    done = 1;
 }

@@ -161,24 +161,24 @@
           });
 
           # Pack the upstream runtime tree (share/vim/vim92) into a deflate
-          # ZIP. Linked into the binary as a section via `ld -r -b binary`
-          # and served from memory by the VFS layer. Drops the on-disk
-          # share/vim/vim92/ from the install.
+          # ZIP, linked into the binary as a section (.incbin) and served from
+          # memory by the unpin-vfs layer. Pack the vim92/ CONTENTS (no version
+          # prefix) so $VIMRUNTIME is exactly the mount marker -- same model as
+          # unpins/vim. Drops the on-disk share/vim/vim92/ from the install.
           runtimeZip = pkgs.runCommand "vim-runtime.zip" {
             nativeBuildInputs = [ pkgs.buildPackages.zip ];
           } ''
             cd ${vimBase}/share/vim
             rt=$(ls -d vim* | head -1)
-            zip -9 -r -q $out "$rt"
+            ( cd "$rt" && zip -9 -r -q "$out" . )
             if [ ! -f $out ] && [ -f $out.zip ]; then mv $out.zip $out; fi
           '';
 
           vim = vimBase.overrideAttrs (old: {
             postPatch = (old.postPatch or "") + ''
-              echo "==> inject unpins VFS sources"
-              cp ${./unpins_vfs.h}            src/unpins_vfs.h
-              cp ${./unpins_vfs_hooks.h}      src/unpins_vfs_hooks.h
-              cp ${./unpins_vfs.c}            src/unpins_vfs.c
+              echo "==> inject unpin-vfs core (vfs.c + miniz.c, routed via ld --wrap)"
+              cp ${./vfs.c}                   src/vfs.c
+              cp ${./vfs.h}                   src/vfs.h
               cp ${./unpins_init.c}           src/unpins_init.c
               cp ${./unpins_runtime_data.S}   src/unpins_runtime_data.S
               cp ${./miniz.h}                 src/miniz.h
@@ -188,15 +188,20 @@
               cp ${runtimeZip} src/unpins_runtime.zip
               chmod 0644 src/unpins_runtime.zip
 
-              echo "==> insert hooks include INSIDE vim.h's VIM__H guard"
-              sed -i 's|^#endif // VIM__H|#include "unpins_vfs_hooks.h"\n#endif // VIM__H|' src/vim.h
-
-              echo "==> inject unpins_init() right after mch_early_init() in main.c"
+              echo "==> declare + call unpins_init() (env pin) after mch_early_init()"
+              # No vim.h macro hooks anymore -- ld --wrap intercepts vim's libc
+              # open/stat/opendir/... at link time (see patches/Makefile_append).
+              sed -i '1i extern void unpins_init(void);' src/main.c
               sed -i '0,/mch_early_init();/{s|mch_early_init();|mch_early_init();\n    unpins_init();|}' src/main.c
 
               echo "==> add OBJ entries + compile rules to autotools Makefile"
-              sed -i 's|$(XDIFF_OBJS_USED)|$(XDIFF_OBJS_USED) \\\n\tobjects/unpins_vfs.o \\\n\tobjects/unpins_init.o \\\n\tobjects/unpins_runtime_data.o \\\n\tobjects/miniz.o|' src/Makefile
+              sed -i 's|$(XDIFF_OBJS_USED)|$(XDIFF_OBJS_USED) \\\n\tobjects/vfs.o \\\n\tobjects/unpins_init.o \\\n\tobjects/unpins_runtime_data.o \\\n\tobjects/miniz.o|' src/Makefile
               cat ${./patches/Makefile_append} >> src/Makefile
+            '' + pkgs.lib.optionalString pkgs.stdenv.hostPlatform.is32bit ''
+              echo "==> 32-bit musl is _REDIR_TIME64: wrap the __stat_time64 aliases too"
+              printf '%s\n' \
+                'UNPIN_VFS_DEFS += -DUNPIN_WRAP_TIME64' \
+                'override ALL_LIBS += -Wl,--wrap=__stat_time64 -Wl,--wrap=__lstat_time64' >> src/Makefile
             '';
           });
         in
@@ -257,7 +262,12 @@
             } ''
               cd ${pkgs.vim}/share/vim
               rt=$(ls -d vim* | head -1)
-              zip -9 -r -q $out "$rt"
+              # Pack the vim92/ CONTENTS (no version prefix) so the VFS keys are
+              # "menu.vim"/"syntax/…" -- marker mode strips the mount root and
+              # looks up the bare key. (Matches the native runtimeZip above and
+              # unpins/vim; the old `zip … "$rt"` form embedded a vim92/ prefix
+              # that the marker lookups never matched.)
+              ( cd "$rt" && zip -9 -r -q "$out" . )
               if [ ! -f $out ] && [ -f $out.zip ]; then mv $out.zip $out; fi
             '';
           in
@@ -275,11 +285,16 @@
             strictDeps = true;
             enableParallelBuilding = true;
 
+            # Same unpin-vfs core as unpins/vim's Windows build, marker mode
+            # (-DUNPIN_VFS_WIN_MARKER): vim canonicalises virtual paths to
+            # "C:\<marker>\…" and there is no win32_* layer to --wrap, so the
+            # real mch_open/mch_fopen get a virtual-path fast path patched in at
+            # entry, calling the explicit unpin_vfs_* API. No xxd fold here --
+            # gvim.exe is the GUI (-mwindows) binary only.
             postPatch = ''
-              echo "==> inject unpins VFS sources"
-              cp ${./unpins_vfs.h}            src/unpins_vfs.h
-              cp ${./unpins_vfs_hooks.h}      src/unpins_vfs_hooks.h
-              cp ${./unpins_vfs.c}            src/unpins_vfs.c
+              echo "==> inject unpin-vfs core sources"
+              cp ${./vfs.h}                   src/vfs.h
+              cp ${./vfs.c}                   src/vfs.c
               cp ${./unpins_init.c}           src/unpins_init.c
               cp ${./unpins_runtime_data.S}   src/unpins_runtime_data.S
               cp ${./miniz.h}                 src/miniz.h
@@ -289,28 +304,46 @@
               cp ${runtimeZip} src/unpins_runtime.zip
               chmod 0644 src/unpins_runtime.zip
 
-              echo "==> insert hooks include inside VIM__H guard"
-              sed -i 's|^#endif // VIM__H|#include "unpins_vfs_hooks.h"\n#endif // VIM__H|' src/vim.h
-
-              echo "==> inject unpins_init() right after mch_early_init() in main.c"
+              echo "==> declare + call unpins_init() (env pin) after mch_early_init()"
+              sed -i '1i extern void unpins_init(void);' src/main.c
               sed -i '0,/mch_early_init();/{s|mch_early_init();|mch_early_init();\n    unpins_init();|}' src/main.c
 
-              echo "==> patch os_win32.c mch_open/mch_fopen to dispatch virtual paths"
+              echo "==> patch os_win32.c mch_open/mch_fopen to dispatch virtual paths via the VFS"
+              sed -i 's|^#include "vim.h"|#include "vim.h"\nextern int unpin_vfs_is_virtual(const char *);\nextern int unpin_vfs_open(const char *, int, ...);\nextern FILE *unpin_vfs_fopen(const char *, const char *);|' src/os_win32.c
               awk '
               /^mch_open\(const char \*name, int flags, int mode\)$/ {
                   print; getline; print;
-                  print "    if (unpins_vfs_is_virtual(name))";
-                  print "\treturn unpins_vfs_open(name, flags, mode);";
+                  print "    if (unpin_vfs_is_virtual(name))";
+                  print "\treturn unpin_vfs_open(name, flags, mode);";
                   next;
               }
               /^mch_fopen\(const char \*name, const char \*mode\)$/ {
                   print; getline; print;
-                  print "    if (unpins_vfs_is_virtual(name))";
-                  print "\treturn unpins_vfs_fopen(name, mode);";
+                  print "    if (unpin_vfs_is_virtual(name))";
+                  print "\treturn unpin_vfs_fopen(name, mode);";
                   next;
               }
               { print }' src/os_win32.c > src/os_win32.c.new
               mv src/os_win32.c.new src/os_win32.c
+
+              echo "==> patch os_mswin.c vim_stat so :runtime/:syntax/menu resolve in the VFS"
+              # mch_stat is a macro -> vim_stat() -> stat_impl(). vim's
+              # gen_expand_wildcards verifies a wildcard-free runtime file with
+              # mch_getperm()->mch_stat() before sourcing, so without this the
+              # runtime tree (syntax/menu/ftplugin/indent) is invisible to the
+              # GUI too. Materialise to a temp and let vim's stat_impl fill stat_T.
+              sed -i 's|^#include "vim.h"|#include "vim.h"\nextern int unpin_vfs_is_virtual(const char *);\nextern const char *unpin_vfs_winpath(const char *);|' src/os_mswin.c
+              awk '
+              /^vim_stat\(const char \*name, stat_T \*stp\)$/ {
+                  print; getline; print;
+                  print "    if (unpin_vfs_is_virtual(name)) {";
+                  print "\tconst char *__m = unpin_vfs_winpath(name);";
+                  print "\treturn __m ? stat_impl(__m, stp, TRUE) : -1;";
+                  print "    }";
+                  next;
+              }
+              { print }' src/os_mswin.c > src/os_mswin.c.new
+              mv src/os_mswin.c.new src/os_mswin.c
 
               echo "==> add OBJ entries to Make_cyg_ming.mak"
               cat ${./patches/Make_cyg_ming_append} >> src/Make_cyg_ming.mak
@@ -325,15 +358,24 @@
             buildPhase = ''
               runHook preBuild
 
-              # Pre-build our objects into OUTDIR (gobjx86-64 for ARCH=x86-64).
+              # Pre-build our objects into OUTDIR (gobjx86-64 for the GUI build).
+              # Make_ming.mak's pattern rule doesn't carry the VFS/miniz defines,
+              # so the explicit compile here is the simplest reliable hook. The
+              # string-literal -D flags are inlined (single quotes round the
+              # double quotes) so the C string survives the shell -- same form
+              # the native Makefile_append uses.
               mkdir -p src/gobjx86-64
               MINIZ_DEFS='-DMINIZ_NO_TIME -DMINIZ_NO_ARCHIVE_WRITING_APIS -DMINIZ_NO_ZLIB_APIS -DMINIZ_NO_ZLIB_COMPATIBLE_NAMES'
               CFLAGS_BASE='-I. -O2 -march=x86-64 -DWIN32 -DWINVER=0x0601 -D_WIN32_WINNT=0x0601'
               ( cd src && \
-                ${prefix}-gcc -c $CFLAGS_BASE $MINIZ_DEFS -o gobjx86-64/unpins_vfs.o            unpins_vfs.c          && \
-                ${prefix}-gcc -c $CFLAGS_BASE             -o gobjx86-64/unpins_init.o           unpins_init.c         && \
-                ${prefix}-gcc -c $CFLAGS_BASE $MINIZ_DEFS -w -o gobjx86-64/miniz.o              miniz.c               && \
-                ${prefix}-gcc -c $CFLAGS_BASE             -o gobjx86-64/unpins_runtime_data.o   unpins_runtime_data.S )
+                ${prefix}-gcc -c $CFLAGS_BASE \
+                  -DUNPIN_VFS_WIN_MARKER='"__unpins_vimruntime__"' \
+                  -DUNPIN_VFS_ROOT='"/__unpins_vimruntime__/"' \
+                  -DUNPIN_VFS_BLOB_SYM=unpins_runtime_zip \
+                  $MINIZ_DEFS -o gobjx86-64/vfs.o                vfs.c                 && \
+                ${prefix}-gcc -c $CFLAGS_BASE                    -o gobjx86-64/unpins_init.o        unpins_init.c         && \
+                ${prefix}-gcc -c $CFLAGS_BASE $MINIZ_DEFS -w     -o gobjx86-64/miniz.o              miniz.c               && \
+                ${prefix}-gcc -c $CFLAGS_BASE                    -o gobjx86-64/unpins_runtime_data.o unpins_runtime_data.S )
 
               make -C src -f Make_ming.mak \
                 FEATURES=NORMAL \
