@@ -1,5 +1,5 @@
 {
-  description = "Standalone build of gvim (Linux GTK2 + Windows GUI)";
+  description = "gvim (Linux GTK2 + Windows GUI) as a single self-contained binary";
 
   nixConfig = {
     extra-substituters = [ "https://unpins.cachix.org" ];
