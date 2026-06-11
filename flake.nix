@@ -21,7 +21,8 @@
     let
       ulib = unpins-lib.lib;
 
-      # Man tree embedded into both the native gvim and gvim.exe via withMan.
+      # Man tree embedded into both the native gvim and gvim.exe (manRoot in
+      # the per-target withUnpinEmbed call).
       # vim-full's installed man (vim/vimdiff/evim/vimtutor.1) is the same set
       # the gvim build produces and is version-locked to this flake's nixpkgs.
       # Upstream installs NO gvim.1 (nixpkgs skips vim's GUI man-link step; gvim
@@ -35,6 +36,19 @@
         mkdir -p $out/share/man/man1
         cp ${pkgs.buildPackages.vim-full}/share/man/man1/*.1.gz $out/share/man/man1/
         printf '.so man1/vim.1\n' > $out/share/man/man1/gvim.1
+      '';
+
+      # Stage the vim<NN>/ tree CONTENTS (no version prefix) as the ZIP root so
+      # $VIMRUNTIME is exactly the mount marker -- same model as unpins/vim.
+      # The tree is arch-independent text, so every target stages it from the
+      # BUILD-host vim (one cache-hit drv for the whole matrix) instead of
+      # harvesting a second full GTK2 build per arch, as the old .incbin zip
+      # did. chmod: the store copy is read-only and the embed needs writable
+      # staging.
+      vimRuntimeStage = rtSrc: ''
+        __vim_rt=$(ls -d ${rtSrc}/share/vim/vim* | head -1)
+        cp -a "$__vim_rt/." "$__unpin_stage/"
+        chmod -R u+w "$__unpin_stage"
       '';
 
       # Takes the per-target `pkgs` mkStandaloneFlake hands the `build` closure
@@ -160,33 +174,17 @@
             ];
           });
 
-          # Pack the upstream runtime tree (share/vim/vim92) into a deflate
-          # ZIP, linked into the binary as a section (.incbin) and served from
-          # memory by the unpin-vfs layer. Pack the vim92/ CONTENTS (no version
-          # prefix) so $VIMRUNTIME is exactly the mount marker -- same model as
-          # unpins/vim. Drops the on-disk share/vim/vim92/ from the install.
-          runtimeZip = pkgs.runCommand "vim-runtime.zip" {
-            nativeBuildInputs = [ pkgs.buildPackages.zip ];
-          } ''
-            cd ${vimBase}/share/vim
-            rt=$(ls -d vim* | head -1)
-            ( cd "$rt" && zip -9 -r -q "$out" . )
-            if [ ! -f $out ] && [ -f $out.zip ]; then mv $out.zip $out; fi
-          '';
-
           vim = vimBase.overrideAttrs (old: {
             postPatch = (old.postPatch or "") + ''
               echo "==> inject unpin-vfs core (vfs.c + miniz.c, routed via ld --wrap)"
               cp ${./vfs.c}                   src/vfs.c
               cp ${./vfs.h}                   src/vfs.h
               cp ${./unpins_init.c}           src/unpins_init.c
-              cp ${./unpins_runtime_data.S}   src/unpins_runtime_data.S
               cp ${./miniz.h}                 src/miniz.h
               cp ${./miniz.c}                 src/miniz.c
-
-              echo "==> stage runtime ZIP at src/unpins_runtime.zip for .incbin"
-              cp ${runtimeZip} src/unpins_runtime.zip
-              chmod 0644 src/unpins_runtime.zip
+              cp ${./unpin_zstd.c}            src/unpin_zstd.c
+              cp ${./unpin_zstd.h}            src/unpin_zstd.h
+              cp ${./zstddeclib.c}            src/zstddeclib.c
 
               echo "==> declare + call unpins_init() (env pin) after mch_early_init()"
               # No vim.h macro hooks anymore -- ld --wrap intercepts vim's libc
@@ -195,7 +193,7 @@
               sed -i '0,/mch_early_init();/{s|mch_early_init();|mch_early_init();\n    unpins_init();|}' src/main.c
 
               echo "==> add OBJ entries + compile rules to autotools Makefile"
-              sed -i 's|$(XDIFF_OBJS_USED)|$(XDIFF_OBJS_USED) \\\n\tobjects/vfs.o \\\n\tobjects/unpins_init.o \\\n\tobjects/unpins_runtime_data.o \\\n\tobjects/miniz.o|' src/Makefile
+              sed -i 's|$(XDIFF_OBJS_USED)|$(XDIFF_OBJS_USED) \\\n\tobjects/vfs.o \\\n\tobjects/unpins_init.o \\\n\tobjects/unpin_zstd.o \\\n\tobjects/miniz.o|' src/Makefile
               cat ${./patches/Makefile_append} >> src/Makefile
             '' + pkgs.lib.optionalString pkgs.stdenv.hostPlatform.is32bit ''
               echo "==> 32-bit musl is _REDIR_TIME64: wrap the __stat_time64 aliases too"
@@ -211,11 +209,18 @@
         # file. Drop the desktop/icon files; unpins is CLI-only. Runtime
         # tree is embedded in the binary, so wipe share/vim/vim* too.
         #
-        # withMan: gvim's native path is wired manually (nativeBuild = false),
-        # so it bypasses mkStandaloneFlake's automatic embedMan step. Apply
-        # withMan here (with the shared gvimMan tree, incl. the gvim→vim .so) so
-        # `gvim` carries man pages like unpins/vim does.
-        unpins-lib.lib.withMan pkgs { primary = "gvim"; manRoot = "${gvimMan pkgs}"; } (vim.overrideAttrs (old: {
+        # ONE withUnpinEmbed call builds the whole embedded container in a
+        # single pack: the runtime tree (read back by the VFS's self-EOF mode)
+        # plus the man pages from the shared gvimMan tree (incl. the gvim→vim
+        # .so redirect — nixpkgs has no `gvim` attr to harvest from, hence the
+        # explicit manRoot). No aliases: gvim ships only the GUI binary.
+        unpins-lib.lib.withUnpinEmbed pkgs
+          {
+            primary = "gvim";
+            manRoot = "${gvimMan pkgs}";
+            runtimeStage = vimRuntimeStage pkgs.buildPackages.vim;
+          }
+          (vim.overrideAttrs (old: {
           pname = "gvim";
           postInstall = (old.postInstall or "") + ''
             find "$out/bin" -mindepth 1 -not -name vim -delete
@@ -236,10 +241,11 @@
         # Windows remain.
         linuxOnly = true;
 
-        # `build` (native + every Linux cross) and `windowsBuild` each apply
-        # withMan with the custom gvimMan tree themselves (nixpkgs has no `gvim`
-        # attr to graft from), so opt out of mkStandaloneFlake's automatic
-        # embedMan to avoid a redundant second pass.
+        # `build` (native + every Linux cross) and `windowsBuild` each embed
+        # man via their own withUnpinEmbed call (custom gvimMan tree — nixpkgs
+        # has no `gvim` attr to graft from), so opt out of mkStandaloneFlake's
+        # automatic embedMan. (The call's passthru.unpinEmbedsMan would make it
+        # skip anyway; this just states the intent.)
         embedMan = false;
 
         # Linux native + cross (i686/ppc64le/riscv64/aarch64/armv7l): the static
@@ -256,26 +262,19 @@
           let
             cross = pkgs.pkgsCross.mingwW64;
             prefix = cross.stdenv.hostPlatform.config;
-
-            runtimeZip = pkgs.runCommand "vim-runtime.zip" {
-              nativeBuildInputs = [ pkgs.buildPackages.zip ];
-            } ''
-              cd ${pkgs.vim}/share/vim
-              rt=$(ls -d vim* | head -1)
-              # Pack the vim92/ CONTENTS (no version prefix) so the VFS keys are
-              # "menu.vim"/"syntax/…" -- marker mode strips the mount root and
-              # looks up the bare key. (Matches the native runtimeZip above and
-              # unpins/vim; the old `zip … "$rt"` form embedded a vim92/ prefix
-              # that the marker lookups never matched.)
-              ( cd "$rt" && zip -9 -r -q "$out" . )
-              if [ ! -f $out ] && [ -f $out.zip ]; then mv $out.zip $out; fi
-            '';
           in
-          # gvim.exe gets no man from mkStandaloneFlake's windows path
-          # (it sources from x86_64-linux.gvim, which nixpkgs lacks → null),
-          # so embed it here from the shared gvimMan tree.
-          unpins-lib.lib.withMan pkgs { primary = "gvim"; manRoot = "${gvimMan pkgs}"; } (
-          cross.stdenv.mkDerivation {
+          # ONE withUnpinEmbed call, same shape as the native build: runtime
+          # tree (from the native vim — host-agnostic text files) + man from
+          # the shared gvimMan tree (mkStandaloneFlake's windows graft sources
+          # from x86_64-linux.gvim, which nixpkgs lacks → null, so it must be
+          # explicit here).
+          unpins-lib.lib.withUnpinEmbed pkgs
+            {
+              primary = "gvim";
+              manRoot = "${gvimMan pkgs}";
+              runtimeStage = vimRuntimeStage pkgs.vim;
+            }
+            (cross.stdenv.mkDerivation {
             pname = "gvim";
             inherit (pkgs.vim) version src;
 
@@ -296,13 +295,11 @@
               cp ${./vfs.h}                   src/vfs.h
               cp ${./vfs.c}                   src/vfs.c
               cp ${./unpins_init.c}           src/unpins_init.c
-              cp ${./unpins_runtime_data.S}   src/unpins_runtime_data.S
               cp ${./miniz.h}                 src/miniz.h
               cp ${./miniz.c}                 src/miniz.c
-
-              echo "==> stage runtime ZIP at src/unpins_runtime.zip for .incbin"
-              cp ${runtimeZip} src/unpins_runtime.zip
-              chmod 0644 src/unpins_runtime.zip
+              cp ${./unpin_zstd.c}            src/unpin_zstd.c
+              cp ${./unpin_zstd.h}            src/unpin_zstd.h
+              cp ${./zstddeclib.c}            src/zstddeclib.c
 
               echo "==> declare + call unpins_init() (env pin) after mch_early_init()"
               sed -i '1i extern void unpins_init(void);' src/main.c
@@ -365,17 +362,17 @@
               # double quotes) so the C string survives the shell -- same form
               # the native Makefile_append uses.
               mkdir -p src/gobjx86-64
-              MINIZ_DEFS='-DMINIZ_NO_TIME -DMINIZ_NO_ARCHIVE_WRITING_APIS -DMINIZ_NO_ZLIB_APIS -DMINIZ_NO_ZLIB_COMPATIBLE_NAMES'
+              MINIZ_DEFS='-DMINIZ_USE_ZSTD -DMINIZ_NO_TIME -DMINIZ_NO_ARCHIVE_WRITING_APIS -DMINIZ_NO_ZLIB_APIS -DMINIZ_NO_ZLIB_COMPATIBLE_NAMES'
               CFLAGS_BASE='-I. -O2 -march=x86-64 -DWIN32 -DWINVER=0x0601 -D_WIN32_WINNT=0x0601'
               ( cd src && \
                 ${prefix}-gcc -c $CFLAGS_BASE \
                   -DUNPIN_VFS_WIN_MARKER='"__unpins_vimruntime__"' \
                   -DUNPIN_VFS_ROOT='"/__unpins_vimruntime__/"' \
-                  -DUNPIN_VFS_BLOB_SYM=unpins_runtime_zip \
+                  -DUNPIN_VFS_SELF \
                   $MINIZ_DEFS -o gobjx86-64/vfs.o                vfs.c                 && \
                 ${prefix}-gcc -c $CFLAGS_BASE                    -o gobjx86-64/unpins_init.o        unpins_init.c         && \
                 ${prefix}-gcc -c $CFLAGS_BASE $MINIZ_DEFS -w     -o gobjx86-64/miniz.o              miniz.c               && \
-                ${prefix}-gcc -c $CFLAGS_BASE                    -o gobjx86-64/unpins_runtime_data.o unpins_runtime_data.S )
+                ${prefix}-gcc -c $CFLAGS_BASE $MINIZ_DEFS -DUNPIN_ZSTD_VENDORED -w -o gobjx86-64/unpin_zstd.o unpin_zstd.c )
 
               make -C src -f Make_ming.mak \
                 FEATURES=NORMAL \

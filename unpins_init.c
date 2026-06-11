@@ -1,10 +1,12 @@
 /* gvim startup glue for the unpin-vfs runtime.
  *
- * Called once from main() right after mch_early_init(). The runtime tree is a
- * ZIP blob embedded as a section (unpins_runtime_data.S); the unpin-vfs core
- * (vfs.c, linked via `ld --wrap`) serves every libc open/stat/opendir/... whose
- * path falls under the mount root. All this glue does is pin $VIMRUNTIME/$VIM at
- * that root so vim's runtime discovery produces paths the wrappers intercept.
+ * Called once from main() right after mch_early_init(). The runtime tree lives
+ * in the binary's single embedded metadata/runtime ZIP, appended at EOF by the
+ * nix build (withUnpinEmbed); the unpin-vfs core (vfs.c in self-EOF mode,
+ * linked via `ld --wrap`) reads the running executable back and serves every
+ * libc open/stat/opendir/... whose path falls under the mount root. All this
+ * glue does is pin $VIMRUNTIME/$VIM at that root so vim's runtime discovery
+ * produces paths the wrappers intercept.
  *
  * Same model as unpins/vim, minus the xxd multicall: gvim ships only the `gvim`
  * binary (the GUI build renames vim -> gvim and drops every other applet), so
@@ -33,7 +35,7 @@ void unpins_init(void)
     const char *dbg = getenv("UNPINS_DEBUG");
     if (dbg) fprintf(stderr, "[unpins] unpins_init called\n");
 
-    /* Fail fast (and visibly under UNPINS_DEBUG) if the embedded blob is
+    /* Fail fast (and visibly under UNPINS_DEBUG) if the embedded ZIP is
      * unusable; the wrappers would otherwise just lazily ENOENT later. */
     if (!unpin_vfs_init()) {
         if (dbg) fprintf(stderr, "[unpins] unpin_vfs_init failed\n");
