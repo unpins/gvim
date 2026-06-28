@@ -209,18 +209,11 @@
         # file. Drop the desktop/icon files; unpins is CLI-only. Runtime
         # tree is embedded in the binary, so wipe share/vim/vim* too.
         #
-        # ONE withUnpinEmbed call builds the whole embedded container in a
-        # single pack: the runtime tree (read back by the VFS's self-EOF mode)
-        # plus the man pages from the shared gvimMan tree (incl. the gvim→vim
-        # .so redirect — nixpkgs has no `gvim` attr to harvest from, hence the
-        # explicit manRoot). No aliases: gvim ships only the GUI binary.
-        unpins-lib.lib.withUnpinEmbed pkgs
-          {
-            primary = "gvim";
-            manRoot = "${gvimMan pkgs}";
-            runtimeStage = vimRuntimeStage pkgs.buildPackages.vim;
-          }
-          (vim.overrideAttrs (old: {
+        # PRISTINE gvim base (no embed); the runtime tree + man (from the shared
+        # gvimMan tree) are embedded once, post-build, via runtimeEmbed →
+        # unpinEmbedWrap (the single embed path). No aliases: gvim ships only the
+        # GUI binary.
+        vim.overrideAttrs (old: {
           pname = "gvim";
           postInstall = (old.postInstall or "") + ''
             find "$out/bin" -mindepth 1 -not -name vim -delete
@@ -230,7 +223,7 @@
             rm -f  "$out/share/vim/vimrc"
             rmdir  "$out/share/vim" 2>/dev/null || true
           '';
-        }));
+        });
 
       base = unpins-lib.lib.mkStandaloneFlake {
         inherit self;
@@ -254,6 +247,23 @@
         # unpins/vim — no manual per-arch wiring below anymore).
         build = pkgs: linuxGvim pkgs;
 
+        # gvim embeds its own custom gvimMan tree (nixpkgs has no `gvim` attr to
+        # graft from) + the vim runtime — both via runtimeEmbed → unpinEmbedWrap
+        # (man = true overrides embedMan = false). Native runtime comes from the
+        # build-host vim, windows from the native vim (host-agnostic text files).
+        runtimeEmbed = {
+          native = pkgs: base: {
+            man = true;
+            manRoot = "${gvimMan pkgs}";
+            runtimeStage = vimRuntimeStage pkgs.buildPackages.vim;
+          };
+          windows = pkgs: base: {
+            man = true;
+            manRoot = "${gvimMan pkgs}";
+            runtimeStage = vimRuntimeStage pkgs.vim;
+          };
+        };
+
         # Same Make_ming.mak path as unpins/vim, but GUI=yes so the build
         # links against Win32 GUI (USER32/GDI32/comdlg32/COMCTL32) and the
         # resulting binary is `gvim.exe` linked with -mwindows (Windows
@@ -263,18 +273,7 @@
             cross = pkgs.pkgsCross.mingwW64;
             prefix = cross.stdenv.hostPlatform.config;
           in
-          # ONE withUnpinEmbed call, same shape as the native build: runtime
-          # tree (from the native vim — host-agnostic text files) + man from
-          # the shared gvimMan tree (mkStandaloneFlake's windows graft sources
-          # from x86_64-linux.gvim, which nixpkgs lacks → null, so it must be
-          # explicit here).
-          unpins-lib.lib.withUnpinEmbed pkgs
-            {
-              primary = "gvim";
-              manRoot = "${gvimMan pkgs}";
-              runtimeStage = vimRuntimeStage pkgs.vim;
-            }
-            (cross.stdenv.mkDerivation {
+          cross.stdenv.mkDerivation {
             pname = "gvim";
             inherit (pkgs.vim) version src;
 
@@ -399,7 +398,7 @@
             '';
 
             passthru = { pname = "gvim"; inherit (pkgs.vim) version; };
-          });
+          };
       };
 
     in
