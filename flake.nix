@@ -245,6 +245,13 @@
         ];
         smokePattern = "unpins-runtime-ok [1-9][0-9]* lines";
 
+        # …but not on windows: `GUI=yes` links gvim.exe -mwindows, and Windows
+        # gives a GUI-subsystem process no console, so there is no stdout to
+        # match — measured, `--version` and `-h` write nothing and never return.
+        # `-v` only reaches the console UI where a console exists. CI checks the
+        # PE really is GUI-subsystem, so this cannot go stale unnoticed.
+        smokeWindows = false;
+
         # gvim has no macOS build (on macOS, gvim ships as MacVim.app), so drop
         # every darwin attr from the auto-discovered matrix. All Linux archs +
         # Windows remain.
