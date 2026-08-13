@@ -177,14 +177,8 @@
           vim = vimBase.overrideAttrs (old: {
             postPatch = (old.postPatch or "") + ''
               echo "==> inject unpin-vfs core (vfs.c + miniz.c, routed via ld --wrap)"
-              cp ${./vfs.c}                   src/vfs.c
-              cp ${./vfs.h}                   src/vfs.h
-              cp ${./unpins_init.c}           src/unpins_init.c
-              cp ${./miniz.h}                 src/miniz.h
-              cp ${./miniz.c}                 src/miniz.c
-              cp ${./unpin_zstd.c}            src/unpin_zstd.c
-              cp ${./unpin_zstd.h}            src/unpin_zstd.h
-              cp ${./zstddeclib.c}            src/zstddeclib.c
+              cp ${ulib.vfsCore}/*.c ${ulib.vfsCore}/*.h src/
+              cp ${./unpins_init.c} src/unpins_init.c
 
               echo "==> declare + call unpins_init() (env pin) after mch_early_init()"
               # No vim.h macro hooks anymore -- ld --wrap intercepts vim's libc
@@ -228,6 +222,28 @@
       base = unpins-lib.lib.mkStandaloneFlake {
         inherit self;
         name = "gvim";
+
+        # gvim had no smoke at all. `-v` forces the console UI (without it gvim
+        # wants a display and exits 1), and ex mode is the only mode that writes
+        # to stdout without a /dev/stdout redir. Reading a runtime file through
+        # readfile() is what proves the embedded tree is reachable — a version
+        # banner would print with the VFS unbound. The count must be NONZERO:
+        # readfile() of a missing path returns an empty list, so an unreachable
+        # runtime prints "0 lines".
+        smoke = [
+          "-v"
+          "-e"
+          "-s"
+          "-u"
+          "NONE"
+          "-c"
+          ''call setline(1, "unpins-runtime-ok ".len(readfile($VIMRUNTIME."/filetype.vim"))." lines")''
+          "-c"
+          "1p"
+          "-c"
+          "qa!"
+        ];
+        smokePattern = "unpins-runtime-ok [1-9][0-9]* lines";
 
         # gvim has no macOS build (on macOS, gvim ships as MacVim.app), so drop
         # every darwin attr from the auto-discovered matrix. All Linux archs +
@@ -291,14 +307,8 @@
             # gvim.exe is the GUI (-mwindows) binary only.
             postPatch = ''
               echo "==> inject unpin-vfs core sources"
-              cp ${./vfs.h}                   src/vfs.h
-              cp ${./vfs.c}                   src/vfs.c
-              cp ${./unpins_init.c}           src/unpins_init.c
-              cp ${./miniz.h}                 src/miniz.h
-              cp ${./miniz.c}                 src/miniz.c
-              cp ${./unpin_zstd.c}            src/unpin_zstd.c
-              cp ${./unpin_zstd.h}            src/unpin_zstd.h
-              cp ${./zstddeclib.c}            src/zstddeclib.c
+              cp ${ulib.vfsCore}/*.c ${ulib.vfsCore}/*.h src/
+              cp ${./unpins_init.c} src/unpins_init.c
 
               echo "==> declare + call unpins_init() (env pin) after mch_early_init()"
               sed -i '1i extern void unpins_init(void);' src/main.c
