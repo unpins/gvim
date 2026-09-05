@@ -23,8 +23,8 @@
 
       # Man tree embedded into both the native gvim and gvim.exe (manRoot in
       # the per-target withUnpinEmbed call).
-      # vim-full's installed man (vim/vimdiff/evim/vimtutor.1) is the same set
-      # the gvim build produces and is version-locked to this flake's nixpkgs.
+      # vim-full's installed man (vim/vimdiff/evim.1) is the same set the gvim
+      # build produces and is version-locked to this flake's nixpkgs.
       # Upstream installs NO gvim.1 (nixpkgs skips vim's GUI man-link step; gvim
       # is documented inside vim.1), so synthesize a `.so man1/vim.1` redirect —
       # `unpin man gvim` then resolves to vim.1 through the .unpin_man kind-0
@@ -32,9 +32,13 @@
       # cross build ships none, and nixpkgs has no `gvim` attr to source from).
       # Sourced from the BUILD platform (buildPackages) so cross targets don't
       # cross-build vim-full just to harvest its (arch-independent) man pages.
+      # vimtutor.1 is left out: it documents a shell script this artifact does
+      # not contain and has no flag for, unlike evim.1 and vimdiff.1 -- `gvim
+      # -y` and `gvim -d` are modes of this very binary (its own -h lists both).
       gvimMan = pkgs: pkgs.buildPackages.runCommand "gvim-man" { } ''
         mkdir -p $out/share/man/man1
         cp ${pkgs.buildPackages.vim-full}/share/man/man1/*.1.gz $out/share/man/man1/
+        rm -f $out/share/man/man1/vimtutor.1.gz
         printf '.so man1/vim.1\n' > $out/share/man/man1/gvim.1
       '';
 

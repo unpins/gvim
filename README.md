@@ -24,7 +24,9 @@ unpin install gvim
 
 ## Man pages
 
-The Vim man pages (`vim`, `vimdiff`, `evim`, `vimtutor`) are embedded in the binary; `gvim` is documented inside `vim.1`, so `unpin man gvim` resolves there.
+`gvim.1` is embedded in the binary — read it with `unpin man gvim`. Upstream
+documents gvim inside `vim.1`, so that is the page you get, along with `vim`,
+`vimdiff` and `evim` (the manuals for `gvim -d` and `gvim -y`).
 
 ## Build locally
 

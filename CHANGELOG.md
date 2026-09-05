@@ -13,6 +13,9 @@
 - Runtime directory listings no longer repeat a name. `:e $VIMRUNTIME/<Tab>`
   offered `ftplugin/` and `indent/` twice, and fourteen names in all were
   doubled across the tree.
+- `vimtutor.1` is no longer shipped: it documents a shell script this binary
+  does not contain. The `vim`, `gvim`, `vimdiff` and `evim` pages stay — the
+  last two are the manuals for `gvim -d` and `gvim -y`.
 
 ### Changed
 
