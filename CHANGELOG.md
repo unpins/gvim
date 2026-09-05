@@ -11,7 +11,7 @@
   and the embedded tree answered only exact file names. Linux was never
   affected. All four now report exactly what the Linux build reports.
 - Runtime directory listings no longer repeat a name. `:e $VIMRUNTIME/<Tab>`
-  offered `ftplugin/` and `indent/` twice, and fourteen names in all were
+  offered `ftplugin/` and `indent/` twice, and sixteen names in all were
   doubled across the tree.
 - `vimtutor.1` is no longer shipped: it documents a shell script this binary
   does not contain. The `vim`, `gvim`, `vimdiff` and `evim` pages stay — the
