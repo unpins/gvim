@@ -1,0 +1,61 @@
+name: GUI probe (temporary)
+
+# Throwaway: the .exe from this repo's own build hangs on windows-2022 while
+# the released (older) one runs the same script in under a second. Runs a
+# battery against the built artifact to find where it stops. Delete after.
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Build run id whose windows artifact to probe
+        required: true
+
+jobs:
+  probe:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          pattern: '*-windows-x86_64'
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ github.token }}
+      - name: Decompress
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXE_ZST="$(find dist -type f -name '*.exe.zst' | head -1)"
+          choco install zstandard -y --no-progress >/dev/null
+          zstd -d "${EXE_ZST}" -o gvim.exe
+          ls -l gvim.exe
+      - name: Probes
+        shell: bash
+        run: |
+          set +e -u
+          try() {
+            label="$1"; shift
+            limit="$1"; shift
+            rm -f out.txt
+            echo "=== ${label}"
+            start=$SECONDS
+            perl -e 'alarm shift; exec @ARGV' "${limit}" "$@" </dev/null >log.txt 2>&1
+            rc=$?
+            echo "    rc=${rc} elapsed=$((SECONDS-start))s"
+            if [ -s log.txt ]; then echo "    --- stdout/stderr:"; sed 's/^/    /' log.txt; fi
+            if [ -s out.txt ]; then echo "    --- out.txt:"; sed 's/^/    /' out.txt;
+            else echo "    out.txt: absent"; fi
+          }
+          try "bare -c qa!" 20 ./gvim.exe -f -N -u NONE -U NONE -i NONE -c 'qa!'
+          try "write a file, no runtime access" 20 ./gvim.exe -f -N -u NONE -U NONE -i NONE \
+            -c 'call writefile(["written"],"out.txt")' -c 'qa!'
+          try "readfile of the runtime only" 20 ./gvim.exe -f -N -u NONE -U NONE -i NONE \
+            -c 'call writefile([len(readfile($VIMRUNTIME."/filetype.vim"))." lines"],"out.txt")' -c 'qa!'
+          try "getcompletion color only (the glob path)" 20 ./gvim.exe -f -N -u NONE -U NONE -i NONE \
+            -c 'call writefile([len(getcompletion("","color"))." colors"],"out.txt")' -c 'qa!'
+          try "readdir of the runtime root" 20 ./gvim.exe -f -N -u NONE -U NONE -i NONE \
+            -c 'call writefile([len(readdir($VIMRUNTIME))." entries"],"out.txt")' -c 'qa!'
+          try "glob one level" 20 ./gvim.exe -f -N -u NONE -U NONE -i NONE \
+            -c 'call writefile([len(glob($VIMRUNTIME."/*",0,1))." globbed"],"out.txt")' -c 'qa!'
+          echo "=== leftovers"
+          tasklist //FI "IMAGENAME eq gvim.exe" || true
+          exit 0
