@@ -234,6 +234,12 @@
         # banner would print with the VFS unbound. The count must be NONZERO:
         # readfile() of a missing path returns an empty list, so an unreachable
         # runtime prints "0 lines".
+        #
+        # The SECOND count is there because reading a file by name and SEARCHING
+        # a directory are different code paths: getcompletion() globs
+        # colors/*.vim, so an unsearchable runtime prints "0 colors" while the
+        # line count above stays perfectly green. That is exactly the shape the
+        # Windows build shipped in.
         smoke = [
           "-v"
           "-e"
@@ -241,13 +247,13 @@
           "-u"
           "NONE"
           "-c"
-          ''call setline(1, "unpins-runtime-ok ".len(readfile($VIMRUNTIME."/filetype.vim"))." lines")''
+          ''call setline(1, "unpins-runtime-ok ".len(readfile($VIMRUNTIME."/filetype.vim"))." lines ".len(getcompletion("", "color"))." colors")''
           "-c"
           "1p"
           "-c"
           "qa!"
         ];
-        smokePattern = "unpins-runtime-ok [1-9][0-9]* lines";
+        smokePattern = "unpins-runtime-ok [1-9][0-9]* lines [1-9][0-9]* colors";
 
         # …but not on windows: `GUI=yes` links gvim.exe -mwindows, and Windows
         # gives a GUI-subsystem process no console, so there is no stdout to
