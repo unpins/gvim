@@ -19,6 +19,11 @@
 
 ### Changed
 
+- CI now runs `gvim.exe`. It never had: the Windows binary is GUI-subsystem
+  and writes no stdout, so it was built, unpacked and inspected without being
+  executed — which is why the runtime tree above could be broken for months
+  with every check green. It now runs a script that writes what it can read
+  and what it can find to a file, and CI reads that back.
 - `nix build github:unpins/gvim` now downloads 33 MB instead of 776 MB. The
   binary is self-contained; it was still pinning the whole GTK2/X11 build
   closure through data paths baked in at link time that no one running the

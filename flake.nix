@@ -262,6 +262,25 @@
         # PE really is GUI-subsystem, so this cannot go stale unnoticed.
         smokeWindows = false;
 
+        # The .exe still gets executed, it just answers in a file. Same two
+        # counts as the console smoke, and for the same reason: `readfile()`
+        # proves the embedded runtime opens by name, `getcompletion()` globs
+        # colors/*.vim and proves it can be SEARCHED — the half that was broken
+        # on Windows while every other check stayed green.
+        smokeWindowsGui = {
+          files."probe.vim" = ''
+            call writefile(["unpins-runtime-ok "
+              \ .len(readfile($VIMRUNTIME."/filetype.vim"))." lines "
+              \ .len(getcompletion("", "color"))." colors"], "probe.out")
+            qa!
+          '';
+          # -f: don't fork, so the runner's shell waits for the exit. -u/-U
+          # NONE: no vimrc/gvimrc of the runner's own. -i NONE: no viminfo.
+          args = [ "-f" "-N" "-u" "NONE" "-U" "NONE" "-i" "NONE" "-S" "probe.vim" ];
+          outFile = "probe.out";
+          pattern = "unpins-runtime-ok [1-9][0-9]* lines [1-9][0-9]* colors";
+        };
+
         # gvim has no macOS build (on macOS, gvim ships as MacVim.app), so drop
         # every darwin attr from the auto-discovered matrix. All Linux archs +
         # Windows remain.
