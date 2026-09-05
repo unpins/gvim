@@ -13,3 +13,10 @@
 - Runtime directory listings no longer repeat a name. `:e $VIMRUNTIME/<Tab>`
   offered `ftplugin/` and `indent/` twice, and fourteen names in all were
   doubled across the tree.
+
+### Changed
+
+- `nix build github:unpins/gvim` now downloads 33 MB instead of 776 MB. The
+  binary is self-contained; it was still pinning the whole GTK2/X11 build
+  closure through data paths baked in at link time that no one running the
+  artifact can reach. Downloads of the release binary are unaffected.

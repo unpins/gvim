@@ -257,6 +257,24 @@
         # Windows remain.
         linuxOnly = true;
 
+        # Dead data paths the static link bakes in: the toolkit closure's
+        # module/locale/config dirs (gtk+/glib/pango/gdk-pixbuf lib/, pango's
+        # etc/, fontconfig's conf.avail and its dejavu fallback dir, X11's
+        # XErrorDB/XKeysymDB/locale, libthai's thbrk.tri), ncurses' terminfo
+        # and gvim's own share/vim -- the runtime tree rides the embedded VFS.
+        # None is reachable for anyone running the artifact, yet Nix counted
+        # all ten as runtime references: a 776 MB closure behind a 33 MB
+        # self-contained binary. Measured with /nix/store bind-mounted empty:
+        # the GTK2 window still comes up, the VFS runtime still loads, menus
+        # and syntax still work. Same treatment `vim` already gets (16 MB
+        # closure, 0 refs).
+        removeReferences = [
+          "gvim-static" "gtk+-static" "glib-static" "pango-static"
+          "gdk-pixbuf-static" "fontconfig-static" "dejavu-fonts-minimal"
+          "libx11-static" "libxt-static" "libxcursor-static" "libthai-static"
+          "ncurses-static"
+        ];
+
         # `build` (native + every Linux cross) and `windowsBuild` each embed
         # man via their own withUnpinEmbed call (custom gvimMan tree — nixpkgs
         # has no `gvim` attr to graft from), so opt out of mkStandaloneFlake's
