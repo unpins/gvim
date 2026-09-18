@@ -19,6 +19,7 @@
 
 ### Changed
 
+- Updated to Vim 9.2.0541.
 - CI now runs `gvim.exe`. It never had: the Windows binary is GUI-subsystem
   and writes no stdout, so it was built, unpacked and inspected without being
   executed — which is why the runtime tree above could be broken for months
