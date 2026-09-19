@@ -63,8 +63,14 @@
           # graphite2's pkgsStatic .la still claims library_names=libgraphite2.so
           # (which isn't installed). libtool obeys the .la over the .a → link
           # fails. Strip the .la files.
+          # graphite2 1.3.15 also puts `python3.withPackages (…fonttools…)` in
+          # nativeBuildInputs; withPackages loses splicing, so it resolves to
+          # the static target python and fonttools' tests die on "Dynamic
+          # loading not supported". Hand it the build python instead.
           static = pkgs.pkgsStatic.extend (selfP: superP: {
-            graphite2 = superP.graphite2.overrideAttrs (old: {
+            graphite2 = (superP.graphite2.override {
+              python3 = superP.buildPackages.python3;
+            }).overrideAttrs (old: {
               postFixup = (old.postFixup or "") + ''
                 find $out -name '*.la' -delete
               '';
