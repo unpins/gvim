@@ -29,3 +29,6 @@
   binary is self-contained; it was still pinning the whole GTK2/X11 build
   closure through data paths baked in at link time that no one running the
   artifact can reach. Downloads of the release binary are unaffected.
+- The Linux binaries are now built by the unpin-llvm engine (clang with full
+  LTO) instead of nixpkgs' gcc. Windows is unaffected — it has always been its
+  own separate build.

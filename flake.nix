@@ -60,30 +60,16 @@
       # single definition covers every Linux arch.
       linuxGvim = pkgs:
         let
-          # graphite2's pkgsStatic .la still claims library_names=libgraphite2.so
-          # (which isn't installed). libtool obeys the .la over the .a → link
-          # fails. Strip the .la files.
-          # graphite2 1.3.15 also puts `python3.withPackages (…fonttools…)` in
-          # nativeBuildInputs; withPackages loses splicing, so it resolves to
-          # the static target python and fonttools' tests die on "Dynamic
-          # loading not supported". Hand it the build python instead.
+          # The graphite2 (host python, .la), riscv libjpeg and X11 RAWCPP
+          # fixes this flake used to carry are set-wide in nix-lib under the
+          # engine.
           static = pkgs.pkgsStatic.extend (selfP: superP: {
-            graphite2 = (superP.graphite2.override {
-              python3 = superP.buildPackages.python3;
-            }).overrideAttrs (old: {
-              postFixup = (old.postFixup or "") + ''
-                find $out -name '*.la' -delete
-              '';
+            # pixman (via cairo) builds its test suite; `matrix-test` needs
+            # __float128 soft-float builtins compiler-rt has not got on i686.
+            # Only libpixman-1.a is linked.
+            pixman = superP.pixman.overrideAttrs (o: {
+              mesonFlags = (o.mesonFlags or [ ]) ++ [ "-Dtests=disabled" "-Ddemos=disabled" ];
             });
-          } // superP.lib.optionalAttrs superP.stdenv.hostPlatform.isRiscV {
-            # riscv64: libjpeg-turbo's RVV SIMD coverage helper (simdcoverage.c)
-            # fails to compile under gcc-15 — the new RVV jsimd port doesn't
-            # declare every jsimd_can_* the helper references
-            # (jsimd_can_encode_mcu_AC_refine_prepare). Pulled in transitively
-            # via gtk2 -> gdk-pixbuf's JPEG/TIFF image loaders. Reuse nix-lib's
-            # shared fix (drops the unused helper; the RVV lib code is untouched)
-            # — gate to riscv so the other arches keep the cache-hit libjpeg.
-            libjpeg = ulib.nativeFixes."libjpeg-turbo" superP;
           });
 
           # at-spi2-core in atk_only mode: builds just the libatk stub without
@@ -232,6 +218,7 @@
       base = unpins-lib.lib.mkStandaloneFlake {
         inherit self;
         name = "gvim";
+        engine = "unpin-llvm";
 
         # gvim had no smoke at all. `-v` forces the console UI (without it gvim
         # wants a display and exits 1), and ex mode is the only mode that writes
