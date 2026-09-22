@@ -30,5 +30,14 @@
   closure through data paths baked in at link time that no one running the
   artifact can reach. Downloads of the release binary are unaffected.
 - The Linux binaries are now built by the unpin-llvm engine (clang with full
-  LTO) instead of nixpkgs' gcc. Windows is unaffected — it has always been its
-  own separate build.
+  LTO) instead of nixpkgs' gcc.
+- The Windows binary is now built by the same compiler as the Linux ones. Its
+  size barely moves (15.8 MB to 15.7 MB). Under Wine it opens its window at
+  the same size, reads and searches the embedded runtime, loads `:packadd`
+  plugins and keeps going after an error, exactly as the previous binary does.
+  The XPM library behind `:sign` icons is now built from source instead of
+  the prebuilt copy Vim's sources carry.
+
+  It now uses the Universal C Runtime, which is part of Windows 10 and later.
+  On Windows 7 or 8.1 that runtime has to be installed first — it comes through
+  Windows Update. The previous binary did not need it.

@@ -219,6 +219,12 @@
         inherit self;
         name = "gvim";
         engine = "unpin-llvm";
+        multicall = {
+          # The `.exe` on the engine too, not the nixpkgs mingw-gcc cross.
+          windows = true;
+          # Both builds link `vim` and install it as gvim.
+          programs = [{ name = "gvim"; linkName = "vim"; }];
+        };
 
         # gvim had no smoke at all. `-v` forces the console UI (without it gvim
         # wants a display and exits 1), and ex mode is the only mode that writes
@@ -335,6 +341,32 @@
           let
             cross = pkgs.pkgsCross.mingwW64;
             prefix = cross.stdenv.hostPlatform.config;
+            # vim's tree ships src/xpm/x64/lib/libXpm.a prebuilt against msvcrt
+            # (`__iob_func`), which does not link into a UCRT binary. Build the
+            # Win32 port its README names instead.
+            xpm = cross.stdenv.mkDerivation {
+              pname = "libxpm-win32";
+              version = "unstable-2022-10-01";
+              src = pkgs.fetchFromGitHub {
+                owner = "koron";
+                repo = "libXpm-win32";
+                rev = "2fd6b2f88c4ce49e6f264469e447dd2dc41c576a";
+                hash = "sha256-OKPGODmtIN4xJXYWgpw+EiHVWxA7DG1XoarhoeOVj/8=";
+              };
+              # simx.c spells its own header `xpmi.h`; the file is XpmI.h.
+              postPatch = ''
+                sed -i 's|#include "xpmi.h"|#include "XpmI.h"|' src/simx.c
+              '';
+              dontConfigure = true;
+              buildPhase = ''
+                make -C src -f Make_ming.mak CC=$CC AR=$AR -j$NIX_BUILD_CORES libXpm.a
+              '';
+              installPhase = ''
+                install -Dm644 src/libXpm.a $out/lib/libXpm.a
+                install -Dm644 include/X11/xpm.h $out/include/xpm.h
+                install -Dm644 src/simx.h $out/include/simx.h
+              '';
+            };
           in
           cross.stdenv.mkDerivation {
             pname = "gvim";
@@ -360,6 +392,38 @@
               echo "==> declare + call unpins_init() (env pin) after mch_early_init()"
               sed -i '1i extern void unpins_init(void);' src/main.c
               sed -i '0,/mch_early_init();/{s|mch_early_init();|mch_early_init();\n    unpins_init();|}' src/main.c
+
+              echo "==> zero the toolbar metrics before TB_GETMETRICS"
+              # update_toolbar_size() reads the reply's pad fields without
+              # initialising them, so where the control leaves them unset (Wine
+              # has no TB_GETMETRICS) the toolbar is sized from stack garbage;
+              # under clang that left room for two text lines.
+              sed -i 's|^    TBMETRICS\ttbm;$|    TBMETRICS\ttbm = {0};|' src/gui_w32.c
+              grep -q 'TBMETRICS.tbm = {0};' src/gui_w32.c \
+                || { echo "TBMETRICS zero-init did not apply" >&2; exit 1; }
+
+              echo "==> enter through main(), not wWinMain()"
+              # The multicall module takes the program's entry from `main`.
+              # gvim's wWinMain() only records the instance handle and ignores
+              # the rest (VimMain re-reads the command line, which the
+              # dispatcher rewrites), so a main() doing the same is equivalent.
+              awk '
+              /^wWinMain\($/ {
+                  print "main(int argc UNUSED, char **argv UNUSED)";
+                  while ((getline l) > 0) if (l ~ /\)$/) break;
+                  getline; print;
+                  getline;
+                  print "    SaveInst(GetModuleHandleW(NULL));";
+                  next;
+              }
+              { print }' src/os_w32exe.c > src/os_w32exe.c.new
+              mv src/os_w32exe.c.new src/os_w32exe.c
+              sed -i 's|^    int WINAPI$|    int|' src/os_w32exe.c
+              grep -q '^main(int argc UNUSED, char \*\*argv UNUSED)$' src/os_w32exe.c \
+                && ! grep -q '^wWinMain($' src/os_w32exe.c \
+                || { echo "wWinMain -> main did not apply" >&2; exit 1; }
+              sed -i 's|^LFLAGS += -municode$||' src/Make_cyg_ming.mak
+              if grep -q '^LFLAGS += -municode' src/Make_cyg_ming.mak; then echo "-municode not dropped" >&2; exit 1; fi
 
               echo "==> patch os_win32.c mch_open/mch_fopen to dispatch virtual paths via the VFS"
               sed -i 's|^#include "vim.h"|#include "vim.h"\nextern int unpin_vfs_is_virtual(const char *);\nextern int unpin_vfs_open(const char *, int, ...);\nextern FILE *unpin_vfs_fopen(const char *, const char *);|' src/os_win32.c
@@ -470,26 +534,32 @@
                 ${prefix}-gcc -c $CFLAGS_BASE $MINIZ_DEFS -w     -o gobjx86-64/miniz.o              miniz.c               && \
                 ${prefix}-gcc -c $CFLAGS_BASE $MINIZ_DEFS -DUNPIN_ZSTD_VENDORED -w -o gobjx86-64/unpin_zstd.o unpin_zstd.c )
 
+              # HAS_GCC_EH=no: the engine has no libgcc_eh (it unwinds with libunwind).
+              # TARGET=vim.exe: link under the name the native build links (see
+              # `linkName`), installed as gvim.exe below.
               make -C src -f Make_ming.mak \
                 FEATURES=NORMAL \
                 GUI=yes \
+                XPM=${xpm} \
                 OLE=no \
                 DIRECTX=no \
                 CROSS=yes \
                 CROSS_COMPILE=${prefix}- \
                 STATIC_STDCPLUS=yes \
                 STATIC_WINPTHREAD=yes \
+                HAS_GCC_EH=no \
                 WINDRES=${prefix}-windres \
                 ARCH=x86-64 \
+                TARGET=vim.exe \
                 -j$NIX_BUILD_CORES \
-                gvim.exe
+                vim.exe
               runHook postBuild
             '';
 
             installPhase = ''
               runHook preInstall
               mkdir -p $out/bin
-              cp src/gvim.exe $out/bin/gvim.exe
+              cp src/vim.exe $out/bin/gvim.exe
               # Runtime tree is embedded — no companion share/vim to ship.
               runHook postInstall
             '';
