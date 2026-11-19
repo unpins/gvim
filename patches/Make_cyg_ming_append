@@ -7,3 +7,8 @@
 # mode: the runtime ZIP rides the binary's EOF, no blob object). Unlike
 # unpins/vim there is no xxd.o here -- gvim.exe ships only the GUI binary.
 OBJ += $(OUTDIR)/vfs.o $(OUTDIR)/unpins_init.o $(OUTDIR)/miniz.o $(OUTDIR)/unpin_zstd.o
+
+# Upstream's ICONV=yes loads iconv.dll at run time, which a single binary
+# never has: link GNU libiconv statically (ICONV= drops -DDYNAMIC_ICONV).
+DEFINES += -DHAVE_ICONV_H -DHAVE_ICONV
+LIB += -liconv

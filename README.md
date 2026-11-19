@@ -52,5 +52,5 @@ The [Releases](https://github.com/unpins/gvim/releases) page has standalone bina
 
 - **Runtime tree embedded.** Vim's runtime files (syntax, indent, spell, help, menus) are packed into a ZIP and served from memory inside the binary by the shared [unpin-vfs](https://github.com/unpins/unpin-vfs) core — no companion `share/vim` directory.
 - **Graphical toolkit.** The Linux build uses GTK2 + X11 (~32 MB). The Windows build uses the native Win32 GUI, built with mingw-w64.
-- **Feature set.** Built with Vim's **Normal** feature set. The scripting interpreters (Lua, Python, Ruby, Perl, Tcl) and Wayland/XIM input are not compiled in, which keeps the binary self-contained.
+- **Feature set.** Built with Vim's **Huge** feature set: the built-in terminal, channels and jobs, and libsodium encryption (`:set cryptmethod=xchacha20v2`) on every platform, plus the DirectWrite renderer (`:set renderoptions=type:directx`) on Windows. The scripting interpreters (Lua, Python, Ruby, Perl, Tcl) and Wayland input are not compiled in, which keeps the binary self-contained.
 - **macOS.** The graphical Vim for macOS is [MacVim](https://github.com/macvim-dev/macvim), a separate application, so gvim ships for Linux and Windows.

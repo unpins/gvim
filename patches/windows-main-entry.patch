@@ -1,0 +1,37 @@
+Enter gvim.exe through main(), not wWinMain(): the multicall fold takes
+the program's entry from main. wWinMain() only records the instance handle
+and ignores the rest (VimMain re-reads the command line, which the
+dispatcher rewrites), so a main() doing the same is equivalent. Without
+-municode the CRT looks for main.
+
+--- a/src/Make_cyg_ming.mak
++++ b/src/Make_cyg_ming.mak
+@@ -1023,7 +1023,7 @@
+ MZSCHEME_SUFFIX = Z
+ endif
+ 
+-LFLAGS += -municode
++
+ 
+ ifeq ($(VIMDLL),yes)
+ VIMEXE := vim$(DEBUG_SUFFIX).exe
+--- a/src/os_w32exe.c
++++ b/src/os_w32exe.c
+@@ -28,14 +28,10 @@
+ #endif
+ 
+ #ifdef FEAT_GUI
+-    int WINAPI
+-wWinMain(
+-    HINSTANCE	hInstance,
+-    HINSTANCE	hPrevInst UNUSED,
+-    LPWSTR	lpszCmdLine UNUSED,
+-    int		nCmdShow UNUSED)
++    int
++main(int argc UNUSED, char **argv UNUSED)
+ {
+-    SaveInst(hInstance);
++    SaveInst(GetModuleHandleW(NULL));
+     return VimMain(0, NULL);
+ }
+ #else

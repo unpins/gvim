@@ -1,0 +1,18 @@
+Call unpins_init() (unpins_init.c: pins the environment the embedded
+runtime needs) right after mch_early_init(), on every platform.
+
+--- a/src/main.c
++++ b/src/main.c
+@@ -1,3 +1,4 @@
++extern void unpins_init(void);
+ /* vi:set ts=8 sts=4 sw=4 noet:
+  *
+  * VIM - Vi IMproved	by Bram Moolenaar
+@@ -106,6 +107,7 @@
+      * NameBuff.  Thus emsg2() cannot be called!
+      */
+     mch_early_init();
++    unpins_init();
+ 
+ #  ifdef MSWIN
+     /*

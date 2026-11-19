@@ -1,0 +1,16 @@
+Link the VFS core and unpins_init into vim (Linux autotools Makefile);
+their compile rules are appended from patches/Makefile_append.
+
+--- a/src/Makefile
++++ b/src/Makefile
+@@ -1798,6 +1798,10 @@
+ 	$(NETBEANS_OBJ) \
+ 	$(CHANNEL_OBJ) \
+ 	$(XDIFF_OBJS_USED) \
++	objects/vfs.o \
++	objects/unpins_init.o \
++	objects/unpin_zstd.o \
++	objects/miniz.o \
+ 	$(WAYLAND_OBJ)
+ 
+ # The files included by tests are not in OBJ_COMMON.

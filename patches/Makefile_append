@@ -4,7 +4,7 @@
 # --wrap` (below) instead of vim.h macro hooks, so no header is injected into
 # vim's TUs. Self-EOF mode (-DUNPIN_VFS_SELF): the runtime tree is no longer a
 # .incbin section — the nix build appends it to the finished binary as the
-# single metadata/runtime ZIP (withUnpinEmbed), and the VFS reads it back from
+# single metadata/runtime ZIP (runtimeEmbed, via unpinEmbedWrap), and the VFS reads it back from
 # the executable's own EOF. Entries are zstd (ZIP method 93, shared dict),
 # decoded by the vendored decompress-only zstddeclib.c — still no external
 # runtime dependency.
@@ -31,6 +31,7 @@ objects/unpins_init.o: unpins_init.c vfs.h
 # which the gvim link uses ($(CClink) ... $(OBJ) $(ALL_LIBS)) but the standalone
 # xxd sub-make does NOT (it inherits only CC/CFLAGS/LDFLAGS) -- so the xxd the
 # autotools build still produces links clean, then gets deleted in postInstall.
-# (gvim is Linux-only, so unlike unpins/vim the wrap line can live here instead
-# of being appended per-OS by flake.nix.)
+# (This file serves only the Linux autotools build — Windows uses
+# Make_cyg_ming_append — so the wrap line can live here instead of being
+# appended per-OS by flake.nix.)
 override ALL_LIBS += -Wl,--wrap=open -Wl,--wrap=stat -Wl,--wrap=lstat -Wl,--wrap=access -Wl,--wrap=opendir -Wl,--wrap=readdir -Wl,--wrap=closedir -Wl,--wrap=fopen

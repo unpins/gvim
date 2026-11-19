@@ -2,7 +2,7 @@
  *
  * Called once from main() right after mch_early_init(). The runtime tree lives
  * in the binary's single embedded metadata/runtime ZIP, appended at EOF by the
- * nix build (withUnpinEmbed); the unpin-vfs core (vfs.c in self-EOF mode,
+ * nix build (runtimeEmbed, through nix-lib's unpinEmbedWrap); the unpin-vfs core (vfs.c in self-EOF mode,
  * linked via `ld --wrap`) reads the running executable back and serves every
  * libc open/stat/opendir/... whose path falls under the mount root. All this
  * glue does is pin $VIMRUNTIME/$VIM at that root so vim's runtime discovery

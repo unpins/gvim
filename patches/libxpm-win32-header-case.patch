@@ -1,0 +1,14 @@
+simx.c spells its own header `xpmi.h`; the file is XpmI.h, which a
+case-sensitive file system does not find.
+
+--- a/src/simx.c
++++ b/src/simx.c
+@@ -39,7 +39,7 @@
+ #include <config.h>
+ #endif
+ #include "xpm.h"
+-#include "xpmi.h"			/* for XpmMalloc */
++#include "XpmI.h"			/* for XpmMalloc */
+ 
+ /*
+  * On DOS size_t is only 2 bytes, thus malloc(size_t s) can only malloc

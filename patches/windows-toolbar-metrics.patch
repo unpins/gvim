@@ -1,0 +1,16 @@
+update_toolbar_size() reads the pad fields of the TB_GETMETRICS reply
+without initialising them, so where the control leaves them unset (Wine has
+no TB_GETMETRICS) the toolbar is sized from stack garbage; under clang that
+left room for two text lines. Zero the struct first.
+
+--- a/src/gui_w32.c
++++ b/src/gui_w32.c
+@@ -8489,7 +8489,7 @@
+ update_toolbar_size(void)
+ {
+     int		w, h;
+-    TBMETRICS	tbm;
++    TBMETRICS	tbm = {0};
+ 
+     tbm.cbSize = sizeof(TBMETRICS);
+     tbm.dwMask = TBMF_PAD | TBMF_BUTTONSPACING;

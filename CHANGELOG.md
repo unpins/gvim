@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Added
+
+- Vim's Huge feature set on every platform: `:terminal`, channels and jobs,
+  and libsodium encryption (`xchacha20v2`). On Windows, the DirectWrite
+  renderer (`:set renderoptions=type:directx`).
+
+### Fixed
+
+- On Windows, iconv support is built in; `has('iconv')` was 0. Upstream's
+  build loads an `iconv.dll` at run time, which a single binary never has.
+
 ## [9.2.0541-1] - 2026-09-26
 
 ### Fixed
